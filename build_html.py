@@ -87,11 +87,6 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .box{display:flex;align-items:baseline;gap:6px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:6px 12px;white-space:nowrap}
   .num{font-size:13px;font-weight:700;color:var(--brand2)}
   .lab{font-size:13px;color:var(--sub)}
-  .right{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
-  .btn{padding:6px 14px;border:1px solid var(--brand2);background:var(--brand2);color:#fff;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap}
-  .btn:hover{opacity:.9}
-  .btn:disabled{opacity:.6;cursor:default}
-  .btn.disabled{background:var(--sub);border-color:var(--sub);cursor:help}
   .tabs{display:flex;gap:8px;margin:14px 0 8px}
   .tab{padding:9px 18px;border:1px solid var(--line);border-radius:999px;background:var(--card);cursor:pointer;font-size:14px;font-weight:600;color:var(--sub)}
   .tab.active{background:var(--brand2);color:#fff;border-color:var(--brand2)}
@@ -125,10 +120,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     <h1>A股股息率排名</h1>
     <div class="subhead">
       <p class="desc">A股总市值&gt;1000亿元公司，按股息率排名取前30。生成日期：<span id="gen"></span> ｜ TTM窗口起点：<span id="ttmstart"></span></p>
-      <div class="right">
-        <div class="box"><div class="num" id="cnt"></div><div class="lab">市值&gt;1000亿公司数</div></div>
-        <button id="refresh" class="btn">刷新数据</button>
-      </div>
+      <div class="box"><div class="num" id="cnt"></div><div class="lab">市值&gt;1000亿公司数</div></div>
     </div>
   </header>
 
@@ -253,59 +245,8 @@ document.querySelectorAll(".tab").forEach(t=>{
   });
 });
 
-const refreshBtn = document.getElementById("refresh");
-
-// hasBackend: 是否存在可刷新的本地后端(serve.py)。
-// 用对 /api/data 的探测结果判定：本地 serve.py 返回 200；静态部署(Vercel/GitHub Pages)或 file:// 均无此接口。
-let hasBackend = false;
-
-function updateRefreshUI(){
-  if(hasBackend){
-    refreshBtn.title = "点击重跑抓取脚本并更新榜单";
-  }else{
-    refreshBtn.title = "当前为静态页面，实时刷新需在本地运行 serve.py";
-    refreshBtn.classList.add("disabled");
-  }
-}
-
-// 加载数据：有后端时优先取最新 /api/data，否则用内嵌数据(静态部署 / 双击文件)
-(async function(){
-  if(location.protocol.startsWith("http")){
-    try{
-      const res = await fetch("/api/data", {cache:"no-store"});
-      const ct = res.headers.get("content-type") || "";
-      if(res.ok && ct.includes("application/json")){
-        hasBackend = true;
-        initData(await res.json());
-        updateRefreshUI();
-        return;
-      }
-    }catch(e){ /* 回退内嵌数据 */ }
-  }
-  initData(EMBEDDED);
-  updateRefreshUI();
-})();
-
-// 刷新按钮：仅在本地后端(serve.py)环境真正刷新；静态部署/file:// 下给出友好提示
-refreshBtn.addEventListener("click", async ()=>{
-  if(!hasBackend){
-    alert("当前页面为静态部署（如 Vercel / GitHub Pages），或以双击方式打开，没有可用于刷新的后端接口。\n\n如需实时刷新数据，请在本地运行：\n    python serve.py\n然后访问 http://localhost:8000\n\n（在线站点展示的是最近一次生成的数据快照。）");
-    return;
-  }
-  const old = refreshBtn.textContent;
-  refreshBtn.disabled = true;
-  refreshBtn.textContent = "刷新中…";
-  try{
-    const r = await fetch("/api/refresh", {method:"POST"});
-    if(!r.ok) throw new Error("服务器返回 " + r.status);
-    // 服务端已重新生成 index.html，整页重载以获取最新表头与数据
-    location.reload();
-  }catch(e){
-    alert("刷新失败：" + e.message);
-    refreshBtn.disabled = false;
-    refreshBtn.textContent = old;
-  }
-});
+// 直接使用内嵌数据渲染（自包含，可直接打开或静态部署）
+initData(EMBEDDED);
 </script>
 </body>
 </html>
