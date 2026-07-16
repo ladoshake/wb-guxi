@@ -24,6 +24,7 @@
   .btn{padding:6px 14px;border:1px solid var(--brand2);background:var(--brand2);color:#fff;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap}
   .btn:hover{opacity:.9}
   .btn:disabled{opacity:.6;cursor:default}
+  .btn.disabled{background:var(--sub);border-color:var(--sub);cursor:help}
   .tabs{display:flex;gap:8px;margin:14px 0 8px}
   .tab{padding:9px 18px;border:1px solid var(--line);border-radius:999px;background:var(--card);cursor:pointer;font-size:14px;font-weight:600;color:var(--sub)}
   .tab.active{background:var(--brand2);color:#fff;border-color:var(--brand2)}
@@ -185,22 +186,43 @@ document.querySelectorAll(".tab").forEach(t=>{
   });
 });
 
-// 加载数据：通过服务器打开时优先取最新 /api/data，否则用内嵌数据（双击文件场景）
+const refreshBtn = document.getElementById("refresh");
+
+// hasBackend: 是否存在可刷新的本地后端(serve.py)。
+// 用对 /api/data 的探测结果判定：本地 serve.py 返回 200；静态部署(Vercel/GitHub Pages)或 file:// 均无此接口。
+let hasBackend = false;
+
+function updateRefreshUI(){
+  if(hasBackend){
+    refreshBtn.title = "点击重跑抓取脚本并更新榜单";
+  }else{
+    refreshBtn.title = "当前为静态页面，实时刷新需在本地运行 serve.py";
+    refreshBtn.classList.add("disabled");
+  }
+}
+
+// 加载数据：有后端时优先取最新 /api/data，否则用内嵌数据(静态部署 / 双击文件)
 (async function(){
   if(location.protocol.startsWith("http")){
     try{
-      const res = await fetch("/api/data");
-      if(res.ok){ initData(await res.json()); return; }
+      const res = await fetch("/api/data", {cache:"no-store"});
+      const ct = res.headers.get("content-type") || "";
+      if(res.ok && ct.includes("application/json")){
+        hasBackend = true;
+        initData(await res.json());
+        updateRefreshUI();
+        return;
+      }
     }catch(e){ /* 回退内嵌数据 */ }
   }
   initData(EMBEDDED);
+  updateRefreshUI();
 })();
 
-// 刷新按钮：仅在服务器环境可用，点击后重跑抓取+生成并整页重载
-const refreshBtn = document.getElementById("refresh");
+// 刷新按钮：仅在本地后端(serve.py)环境真正刷新；静态部署/file:// 下给出友好提示
 refreshBtn.addEventListener("click", async ()=>{
-  if(!location.protocol.startsWith("http")){
-    alert("请通过本地服务器打开页面以使用刷新功能：运行 python serve.py 后访问 http://localhost:8000");
+  if(!hasBackend){
+    alert("当前页面为静态部署（如 Vercel / GitHub Pages），或以双击方式打开，没有可用于刷新的后端接口。\n\n如需实时刷新数据，请在本地运行：\n    python serve.py\n然后访问 http://localhost:8000\n\n（在线站点展示的是最近一次生成的数据快照。）");
     return;
   }
   const old = refreshBtn.textContent;
