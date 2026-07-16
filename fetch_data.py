@@ -25,13 +25,37 @@ TTM_START = TODAY - dt.timedelta(days=365)
 MARKET_CAP_MIN = 1000.0  # 亿元
 
 # ------------------------- 1. A股代码列表 -------------------------
+def _clean_name(s):
+    """清洗证券简称：去对齐空格、全角字母数字转半角、去除 XD/XR/DR/N 交易状态前缀。"""
+    s = str(s or "").strip().replace(" ", "").replace("\u3000", "")
+    # 全角 ASCII(！-～) 转半角，如 万科Ａ -> 万科A
+    s = "".join(chr(ord(c) - 0xFEE0) if "\uFF01" <= c <= "\uFF5E" else c for c in s)
+    s = re.sub(r"^(XD|XR|DR|N)", "", s)
+    return s
+
+
 def get_all_a_codes():
-    df = ak.stock_info_a_code_name()
-    out = []
-    for _, r in df.iterrows():
-        code = str(r["code"]).zfill(6)
-        name = str(r["name"]).strip()
-        out.append((code, name))
+    """直接用交易所静态名录(沪深)构建 代码->完整名称，避免行情源在除权日给出的
+    XD 前缀截断名(如 中国建筑->XD中国建->中国建)；同时跳过北交所(无 >1000亿, 且其接口不稳定)。"""
+    out, seen = [], set()
+    # 上交所：主板A股 + 科创板；公司简称最干净(无 XD/无截断)，回退证券简称
+    for board in ("主板A股", "科创板"):
+        sh = ak.stock_info_sh_name_code(symbol=board)
+        for _, r in sh.iterrows():
+            code = str(r["证券代码"]).zfill(6)
+            name = _clean_name(r.get("公司简称") or r.get("证券简称"))
+            if code and code not in seen and name:
+                out.append((code, name)); seen.add(code)
+    # 深交所：A股简称(含对齐空格/全角字母，未截断) 经 _clean_name 归一
+    sz = ak.stock_info_sz_name_code()
+    for _, r in sz.iterrows():
+        code = str(r["A股代码"]).strip()
+        if not code or code in ("nan", "None"):
+            continue
+        code = code.zfill(6)
+        name = _clean_name(r.get("A股简称"))
+        if code and code not in seen and name:
+            out.append((code, name)); seen.add(code)
     return out
 
 
@@ -141,6 +165,8 @@ def get_dividends(code, cache):
 def main():
     print("[1/4] 获取A股代码列表 ...")
     codes = get_all_a_codes()
+    # 代码->完整名称映射(akshare 证券全称，避免腾讯行情简称被截断，如"中国建筑"→"中国建")
+    name_map = {c: n for c, n in codes}
     print(f"      A股数: {len(codes)}")
 
     print("[2/4] 拉取腾讯市值并筛选 >1000亿 ...")
@@ -170,6 +196,8 @@ def main():
         return sum(x["per10"] for x in rows if x["fy"] == y) if y != "" else 0.0
     records = []
     for code, (name, mv, price) in big:
+        # 优先使用 akshare 完整名称，回退腾讯简称
+        name = name_map.get(code, name)
         rows = cache.get(code, [])
         # TTM: 除权日 ∈ [TTM_START, TODAY]
         ttm_per10 = sum(x["per10"] for x in rows
