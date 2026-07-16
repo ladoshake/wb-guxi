@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>A股股息率排名</title>
+<style>
+  :root{
+    --bg:#f5f6f8; --card:#ffffff; --ink:#1f2430; --sub:#6b7280;
+    --line:#e5e7eb; --brand:#c0392b; --brand2:#2563eb; --gold:#b8860b;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;
+       background:var(--bg);color:var(--ink);line-height:1.5}
+  .wrap{max-width:1100px;margin:0 auto;padding:16px 16px 56px}
+  header h1{font-size:21px;margin:0 0 4px}
+  header p{margin:1px 0;color:var(--sub);font-size:13px}
+  .subhead{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin:8px 0 2px}
+  .desc{margin:0;color:var(--sub);font-size:13px}
+  .box{display:flex;align-items:baseline;gap:6px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:6px 12px;white-space:nowrap}
+  .num{font-size:13px;font-weight:700;color:var(--brand2)}
+  .lab{font-size:13px;color:var(--sub)}
+  .right{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .btn{padding:6px 14px;border:1px solid var(--brand2);background:var(--brand2);color:#fff;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;white-space:nowrap}
+  .btn:hover{opacity:.9}
+  .btn:disabled{opacity:.6;cursor:default}
+  .tabs{display:flex;gap:8px;margin:14px 0 8px}
+  .tab{padding:9px 18px;border:1px solid var(--line);border-radius:999px;background:var(--card);cursor:pointer;font-size:14px;font-weight:600;color:var(--sub)}
+  .tab.active{background:var(--brand2);color:#fff;border-color:var(--brand2)}
+  .tab.alt.active{background:var(--brand2);border-color:var(--brand2)}
+  .panel{display:none}
+  .panel.active{display:block}
+  table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;font-size:13.5px}
+  th,td{padding:9px 10px;text-align:left;border-bottom:1px solid var(--line);white-space:nowrap}
+  th{background:#f0f1f4;color:#374151;font-weight:600;cursor:pointer;user-select:none;position:relative}
+  th.sort-asc::after{content:" ▲";font-size:10px;color:var(--brand)}
+  th.sort-desc::after{content:" ▼";font-size:10px;color:var(--brand)}
+  tbody tr:nth-child(even){background:#f7f8fa}
+  tbody tr:hover{background:#e8f0fe}
+  .rk{display:inline-block;min-width:22px;text-align:center;font-weight:700;color:var(--brand2)}
+  .code{color:var(--sub);font-size:12px}
+  .yld{font-weight:700;color:var(--brand)}
+  .panel.alt .yld{color:var(--brand2)}
+  .yld2{font-weight:600;color:#0f766e}
+  .sub{font-size:10px;color:var(--sub);font-weight:400;line-height:1.15}
+  .note{margin-top:28px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px 18px;font-size:13px;color:#374151}
+  .note h3{margin:0 0 8px;font-size:15px}
+  .note ul{margin:6px 0;padding-left:20px}
+  .note li{margin:3px 0}
+  .tag{display:inline-block;background:#eef2ff;color:#4338ca;border-radius:6px;padding:1px 7px;font-size:11px;margin-left:6px}
+  footer{margin-top:24px;text-align:center;color:var(--sub);font-size:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>A股股息率排名</h1>
+    <div class="subhead">
+      <p class="desc">A股总市值&gt;1000亿元公司，按股息率排名取前30。生成日期：<span id="gen"></span> ｜ TTM窗口起点：<span id="ttmstart"></span></p>
+      <div class="right">
+        <div class="box"><div class="num" id="cnt"></div><div class="lab">市值&gt;1000亿公司数</div></div>
+        <button id="refresh" class="btn">刷新数据</button>
+      </div>
+    </div>
+  </header>
+
+  <div class="tabs">
+    <div class="tab active" data-tab="ttm">TTM 股息率排名（近12个月）</div>
+    <div class="tab alt" data-tab="lfy">LFY 股息率排名（最近财年）</div>
+  </div>
+
+  <div class="panel active" id="panel-ttm">
+    <table id="table-ttm">
+      <thead><tr>
+        <th data-k="rank">排名</th><th data-k="name">名称</th><th data-k="code">代码</th>
+        <th data-k="price">现价(元)</th><th data-k="total_mv_yi">总市值(亿)</th>
+        <th data-k="dps">每股分红(元/股)</th><th data-k="yield">TTM股息率</th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <div class="panel" id="panel-lfy">
+    <table id="table-lfy">
+      <thead><tr>
+        <th data-k="rank">排名</th><th data-k="name">名称</th><th data-k="code">代码</th>
+        <th data-k="price">现价(元)</th><th data-k="total_mv_yi">总市值(亿)</th>
+        <th data-k="dps">每股分红(元/股)</th><th data-k="yield">LFY股息率</th><th data-k="prev_yield">2024年股息率</th><th data-k="prev2_yield">2023年股息率</th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <div class="note">
+    <h3>计算口径说明</h3>
+    <ul>
+      <li><b>市值筛选</b>：以腾讯行情接口的<b>总市值</b>（单位：亿元人民币）为准，取大于 1000 亿的公司。</li>
+      <li><b>股息率（自行计算）</b>：股息率 = 现金分红合计数 ÷ 当前总市值 × 100%。等价地，按每股现金分红 ÷ 当前股价 计算，结果一致。</li>
+      <li><b>TTM 股息率</b>：取<b>除权除息日</b>在最近 12 个月内（含本次生成日）的所有现金分红之和 ÷ 当前总市值。可涵盖上年年报分红与当年中期分红。</li>
+      <li><b>LFY 股息率</b>：取<b>最近一个完整财年</b>（按分红年度，通常为最新披露的年度报告所属年度）的<b>全部现金分红之和</b> ÷ 当前总市值。<b>一年内若有多次分红（年度 / 中期 / 特别），会全部相加</b>。</li>
+      <li><b>每股分红列</b>：单位为 <b>元/股</b>。TTM 表为该列近 12 个月现金分红合计数；LFY 表为该财年现金分红合计数（含年度/中期/特别分红）。</li>
+      <li><b>历史股息率列（LFY 表）</b>：在「LFY 股息率」之后额外列出<b>前一年（LFY 财年−1）与前两年（LFY 财年−2）股息率</b>，计算口径与 LFY 完全一致（该财年内多次分红相加 ÷ 总市值）。表头直接显示具体年份，单元格下方小字为该财年年份。可用于观察分红的连续性与趋势。</li>
+      <li><b>数据来源</b>：市值来自腾讯财经实时行情（总市值含 H 股）；分红明细来自公开财经数据接口（巨潮历史分红）。榜单为计算快照，非投资建议。</li>
+    </ul>
+  </div>
+
+  <footer>股息率排名工具 · 数据由脚本抓取并计算生成 · 仅供研究参考，不构成投资建议</footer>
+</div>
+
+<script>
+const EMBEDDED = {"generated_at": "2026-07-16", "market_cap_min_yi": 1000.0, "big_cap_count": 202, "ttm_start": "2025-07-16", "ttm": [{"rank": 1, "code": "601668", "name": "中国建筑", "price": 4.72, "total_mv_yi": 1950.32, "dps": 0.543, "yield": 11.511, "fy": ""}, {"rank": 2, "code": "000858", "name": "五粮液", "price": 76.4, "total_mv_yi": 2965.55, "dps": 8.327, "yield": 10.899, "fy": ""}, {"rank": 3, "code": "600000", "name": "浦发银行", "price": 9.31, "total_mv_yi": 3100.77, "dps": 0.83, "yield": 8.915, "fy": ""}, {"rank": 4, "code": "000651", "name": "格力电器", "price": 39.83, "total_mv_yi": 2231.04, "dps": 3.0, "yield": 7.532, "fy": ""}, {"rank": 5, "code": "000568", "name": "泸州老窖", "price": 83.12, "total_mv_yi": 1223.44, "dps": 5.95, "yield": 7.158, "fy": ""}, {"rank": 6, "code": "601919", "name": "中远海控", "price": 14.66, "total_mv_yi": 2238.31, "dps": 1.0, "yield": 6.821, "fy": ""}, {"rank": 7, "code": "002142", "name": "宁波银行", "price": 32.48, "total_mv_yi": 2144.85, "dps": 2.1, "yield": 6.466, "fy": ""}, {"rank": 8, "code": "601818", "name": "光大银行", "price": 3.15, "total_mv_yi": 1861.19, "dps": 0.19, "yield": 6.032, "fy": ""}, {"rank": 9, "code": "601166", "name": "兴业银行", "price": 17.81, "total_mv_yi": 3769.11, "dps": 1.066, "yield": 5.985, "fy": ""}, {"rank": 10, "code": "600926", "name": "杭州银行", "price": 15.79, "total_mv_yi": 1144.62, "dps": 0.94, "yield": 5.953, "fy": ""}, {"rank": 11, "code": "601288", "name": "农业银行", "price": 6.37, "total_mv_yi": 22293.92, "dps": 0.375, "yield": 5.887, "fy": ""}, {"rank": 12, "code": "600690", "name": "海尔智家", "price": 21.02, "total_mv_yi": 1971.18, "dps": 1.234, "yield": 5.872, "fy": ""}, {"rank": 13, "code": "601390", "name": "中国中铁", "price": 4.45, "total_mv_yi": 1091.64, "dps": 0.26, "yield": 5.843, "fy": ""}, {"rank": 14, "code": "600011", "name": "华能国际", "price": 6.9, "total_mv_yi": 1083.17, "dps": 0.4, "yield": 5.797, "fy": ""}, {"rank": 15, "code": "601766", "name": "中国中车", "price": 5.6, "total_mv_yi": 1607.14, "dps": 0.32, "yield": 5.714, "fy": ""}, {"rank": 16, "code": "601229", "name": "上海银行", "price": 9.13, "total_mv_yi": 1297.29, "dps": 0.52, "yield": 5.696, "fy": ""}, {"rank": 17, "code": "000001", "name": "平安银行", "price": 10.84, "total_mv_yi": 2103.6, "dps": 0.596, "yield": 5.498, "fy": ""}, {"rank": 18, "code": "601169", "name": "北京银行", "price": 5.08, "total_mv_yi": 1074.06, "dps": 0.278, "yield": 5.472, "fy": ""}, {"rank": 19, "code": "600016", "name": "民生银行", "price": 3.47, "total_mv_yi": 1519.25, "dps": 0.189, "yield": 5.447, "fy": ""}, {"rank": 20, "code": "600036", "name": "招商银行", "price": 37.76, "total_mv_yi": 9523.01, "dps": 2.016, "yield": 5.339, "fy": ""}, {"rank": 21, "code": "600887", "name": "伊利股份", "price": 25.93, "total_mv_yi": 1640.17, "dps": 1.38, "yield": 5.322, "fy": ""}, {"rank": 22, "code": "601318", "name": "中国平安", "price": 50.95, "total_mv_yi": 9225.84, "dps": 2.7, "yield": 5.299, "fy": ""}, {"rank": 23, "code": "600019", "name": "宝钢股份", "price": 5.74, "total_mv_yi": 1250.29, "dps": 0.3, "yield": 5.226, "fy": ""}, {"rank": 24, "code": "000333", "name": "美的集团", "price": 82.67, "total_mv_yi": 6298.34, "dps": 4.3, "yield": 5.201, "fy": ""}, {"rank": 25, "code": "601633", "name": "长城汽车", "price": 15.58, "total_mv_yi": 1332.62, "dps": 0.8, "yield": 5.135, "fy": ""}, {"rank": 26, "code": "601998", "name": "中信银行", "price": 7.44, "total_mv_yi": 4140.0, "dps": 0.381, "yield": 5.121, "fy": ""}, {"rank": 27, "code": "600941", "name": "中国移动", "price": 92.8, "total_mv_yi": 20122.47, "dps": 4.704, "yield": 5.069, "fy": ""}, {"rank": 28, "code": "600919", "name": "江苏银行", "price": 11.45, "total_mv_yi": 2101.23, "dps": 0.564, "yield": 4.927, "fy": ""}, {"rank": 29, "code": "601328", "name": "交通银行", "price": 6.83, "total_mv_yi": 6035.25, "dps": 0.325, "yield": 4.754, "fy": ""}, {"rank": 30, "code": "601009", "name": "南京银行", "price": 11.21, "total_mv_yi": 1385.96, "dps": 0.529, "yield": 4.72, "fy": ""}], "lfy": [{"rank": 1, "code": "601919", "name": "中远海控", "price": 14.66, "total_mv_yi": 2238.31, "dps": 1.0, "yield": 6.821, "fy": 2025, "prev_yield": 10.573, "prev2_yield": 5.048, "prev_year": 2024, "prev2_year": 2023}, {"rank": 2, "code": "000858", "name": "五粮液", "price": 76.4, "total_mv_yi": 2965.55, "dps": 5.158, "yield": 6.751, "fy": 2025, "prev_yield": 7.52, "prev2_yield": 6.113, "prev_year": 2024, "prev2_year": 2023}, {"rank": 3, "code": "601166", "name": "兴业银行", "price": 17.81, "total_mv_yi": 3769.11, "dps": 1.066, "yield": 5.985, "fy": 2025, "prev_yield": 5.952, "prev2_yield": 5.839, "prev_year": 2024, "prev2_year": 2023}, {"rank": 4, "code": "600011", "name": "华能国际", "price": 6.9, "total_mv_yi": 1083.17, "dps": 0.4, "yield": 5.797, "fy": 2025, "prev_yield": 3.913, "prev2_yield": 2.899, "prev_year": 2024, "prev2_year": 2023}, {"rank": 5, "code": "601668", "name": "中国建筑", "price": 4.72, "total_mv_yi": 1950.32, "dps": 0.272, "yield": 5.758, "fy": 2025, "prev_yield": 5.752, "prev2_yield": 5.751, "prev_year": 2024, "prev2_year": 2023}, {"rank": 6, "code": "601229", "name": "上海银行", "price": 9.13, "total_mv_yi": 1297.29, "dps": 0.52, "yield": 5.696, "fy": 2025, "prev_yield": 5.476, "prev2_yield": 5.038, "prev_year": 2024, "prev2_year": 2023}, {"rank": 7, "code": "000001", "name": "平安银行", "price": 10.84, "total_mv_yi": 2103.6, "dps": 0.596, "yield": 5.498, "fy": 2025, "prev_yield": 5.609, "prev2_yield": 6.633, "prev_year": 2024, "prev2_year": 2023}, {"rank": 8, "code": "601169", "name": "北京银行", "price": 5.08, "total_mv_yi": 1074.06, "dps": 0.278, "yield": 5.472, "fy": 2025, "prev_yield": 6.299, "prev2_yield": 6.299, "prev_year": 2024, "prev2_year": 2023}, {"rank": 9, "code": "600016", "name": "民生银行", "price": 3.47, "total_mv_yi": 1519.25, "dps": 0.189, "yield": 5.447, "fy": 2025, "prev_yield": 5.533, "prev2_yield": 6.225, "prev_year": 2024, "prev2_year": 2023}, {"rank": 10, "code": "600036", "name": "招商银行", "price": 37.76, "total_mv_yi": 9523.01, "dps": 2.016, "yield": 5.339, "fy": 2025, "prev_yield": 5.297, "prev2_yield": 5.222, "prev_year": 2024, "prev2_year": 2023}, {"rank": 11, "code": "600887", "name": "伊利股份", "price": 25.93, "total_mv_yi": 1640.17, "dps": 1.38, "yield": 5.322, "fy": 2025, "prev_yield": 4.705, "prev2_yield": 4.628, "prev_year": 2024, "prev2_year": 2023}, {"rank": 12, "code": "601318", "name": "中国平安", "price": 50.95, "total_mv_yi": 9225.84, "dps": 2.7, "yield": 5.299, "fy": 2025, "prev_yield": 5.005, "prev2_yield": 4.769, "prev_year": 2024, "prev2_year": 2023}, {"rank": 13, "code": "600019", "name": "宝钢股份", "price": 5.74, "total_mv_yi": 1250.29, "dps": 0.3, "yield": 5.226, "fy": 2025, "prev_yield": 3.659, "prev2_yield": 5.401, "prev_year": 2024, "prev2_year": 2023}, {"rank": 14, "code": "000333", "name": "美的集团", "price": 82.67, "total_mv_yi": 6298.34, "dps": 4.3, "yield": 5.201, "fy": 2025, "prev_yield": 4.234, "prev2_yield": 3.629, "prev_year": 2024, "prev2_year": 2023}, {"rank": 15, "code": "600809", "name": "山西汾酒", "price": 118.25, "total_mv_yi": 1442.61, "dps": 6.06, "yield": 5.125, "fy": 2024, "prev_yield": 3.696, "prev2_yield": 2.808, "prev_year": 2023, "prev2_year": 2022}, {"rank": 16, "code": "601998", "name": "中信银行", "price": 7.44, "total_mv_yi": 4140.0, "dps": 0.381, "yield": 5.121, "fy": 2025, "prev_yield": 4.767, "prev2_yield": 4.383, "prev_year": 2024, "prev2_year": 2023}, {"rank": 17, "code": "600941", "name": "中国移动", "price": 92.8, "total_mv_yi": 20122.47, "dps": 4.704, "yield": 5.069, "fy": 2025, "prev_yield": 5.033, "prev2_yield": 4.752, "prev_year": 2024, "prev2_year": 2023}, {"rank": 18, "code": "600919", "name": "江苏银行", "price": 11.45, "total_mv_yi": 2101.23, "dps": 0.564, "yield": 4.927, "fy": 2025, "prev_yield": 4.547, "prev2_yield": 4.105, "prev_year": 2024, "prev2_year": 2023}, {"rank": 19, "code": "601328", "name": "交通银行", "price": 6.83, "total_mv_yi": 6035.25, "dps": 0.325, "yield": 4.754, "fy": 2025, "prev_yield": 5.549, "prev2_yield": 5.49, "prev_year": 2024, "prev2_year": 2023}, {"rank": 20, "code": "601009", "name": "南京银行", "price": 11.21, "total_mv_yi": 1385.96, "dps": 0.529, "yield": 4.72, "fy": 2025, "prev_yield": 4.867, "prev2_yield": 4.788, "prev_year": 2024, "prev2_year": 2023}, {"rank": 21, "code": "601857", "name": "中国石油", "price": 10.02, "total_mv_yi": 18338.7, "dps": 0.47, "yield": 4.691, "fy": 2025, "prev_yield": 4.691, "prev2_yield": 4.391, "prev_year": 2024, "prev2_year": 2023}, {"rank": 22, "code": "601728", "name": "中国电信", "price": 5.88, "total_mv_yi": 5380.62, "dps": 0.272, "yield": 4.626, "fy": 2025, "prev_yield": 4.418, "prev2_yield": 3.966, "prev_year": 2024, "prev2_year": 2023}, {"rank": 23, "code": "601088", "name": "中国神华", "price": 43.69, "total_mv_yi": 9476.11, "dps": 2.01, "yield": 4.601, "fy": 2025, "prev_yield": 5.173, "prev2_yield": 5.173, "prev_year": 2024, "prev2_year": 2023}, {"rank": 24, "code": "600000", "name": "浦发银行", "price": 9.31, "total_mv_yi": 3100.77, "dps": 0.42, "yield": 4.511, "fy": 2025, "prev_yield": 4.404, "prev2_yield": 3.448, "prev_year": 2024, "prev2_year": 2023}, {"rank": 25, "code": "002736", "name": "国信证券", "price": 10.34, "total_mv_yi": 1059.0, "dps": 0.45, "yield": 4.352, "fy": 2025, "prev_yield": 3.385, "prev2_yield": 2.611, "prev_year": 2024, "prev2_year": 2023}, {"rank": 26, "code": "002594", "name": "比亚迪", "price": 91.76, "total_mv_yi": 8365.94, "dps": 3.974, "yield": 4.331, "fy": 2024, "prev_yield": 3.376, "prev2_yield": 1.245, "prev_year": 2023, "prev2_year": 2022}, {"rank": 27, "code": "601658", "name": "邮储银行", "price": 5.09, "total_mv_yi": 6112.84, "dps": 0.218, "yield": 4.289, "fy": 2025, "prev_yield": 5.139, "prev2_yield": 5.128, "prev_year": 2024, "prev2_year": 2023}, {"rank": 28, "code": "600926", "name": "杭州银行", "price": 15.79, "total_mv_yi": 1144.62, "dps": 0.66, "yield": 4.18, "fy": 2025, "prev_yield": 4.117, "prev2_yield": 3.293, "prev_year": 2024, "prev2_year": 2023}, {"rank": 29, "code": "601398", "name": "工商银行", "price": 7.51, "total_mv_yi": 26766.11, "dps": 0.31, "yield": 4.132, "fy": 2025, "prev_yield": 4.101, "prev2_yield": 4.08, "prev_year": 2024, "prev2_year": 2023}, {"rank": 30, "code": "600028", "name": "中国石化", "price": 5.03, "total_mv_yi": 6082.55, "dps": 0.2, "yield": 3.976, "fy": 2025, "prev_yield": 5.686, "prev2_yield": 6.859, "prev_year": 2024, "prev2_year": 2023}]};
+let DATA = EMBEDDED;
+
+const fmt = (n,d=2)=> (n==null||isNaN(n))?"-":Number(n).toLocaleString("zh-CN",{minimumFractionDigits:d,maximumFractionDigits:d});
+
+// 排序状态：每个表独立维护，便于刷新后保留用户排序
+const sortState = { ttm:{key:"yield",dir:-1}, lfy:{key:"yield",dir:-1} };
+
+function renderTable(tableId, rows, withFy){
+  const tbody = document.querySelector(`#${tableId} tbody`);
+  tbody.innerHTML = "";
+  rows.forEach(r=>{
+    const tr = document.createElement("tr");
+    const lfyCell = `<td class="yld">${fmt(r.yield,2)}%</td>`;
+    const prev = withFy ? `<td class="yld2">${fmt(r.prev_yield,2)}%</td><td class="yld2">${fmt(r.prev2_yield,2)}%</td>` : "";
+    tr.innerHTML = `<td><span class="rk">${r.rank}</span></td>
+      <td><b>${r.name}</b></td>
+      <td class="code">${r.code}</td>
+      <td>${fmt(r.price)}</td>
+      <td>${fmt(r.total_mv_yi,0)}</td>
+      <td>${fmt(r.dps,3)}</td>
+      ${lfyCell}${prev}`;
+    tbody.appendChild(tr);
+  });
+}
+
+function applyTable(tableId, withFy){
+  const key = withFy ? "lfy" : "ttm";
+  const rows = (withFy ? DATA.lfy : DATA.ttm).slice();
+  const sk = sortState[key];
+  rows.sort((a,b)=>{
+    let va=a[sk.key], vb=b[sk.key];
+    if(typeof va==="string"){ return sk.dir*va.localeCompare(vb,"zh"); }
+    return sk.dir*(va-vb);
+  });
+  renderTable(tableId, rows, withFy);
+}
+
+function applyAll(){ applyTable("table-ttm", false); applyTable("table-lfy", true); }
+
+function bindTable(tableId, withFy){
+  const table = document.getElementById(tableId);
+  table.querySelectorAll("th").forEach(th=>{
+    th.addEventListener("click",()=>{
+      const key = withFy ? "lfy" : "ttm";
+      const kp = th.dataset.k;
+      if(sortState[key].key===kp){ sortState[key].dir *= -1; }
+      else { sortState[key].key=kp; sortState[key].dir = (kp==="rank"||kp==="name"||kp==="code")?1:-1; }
+      table.querySelectorAll("th").forEach(x=>x.classList.remove("sort-asc","sort-desc"));
+      th.classList.add(sortState[key].dir===1?"sort-asc":"sort-desc");
+      applyTable(tableId, withFy);
+    });
+  });
+}
+
+function initData(d){
+  DATA = d;
+  document.getElementById("gen").textContent = DATA.generated_at;
+  document.getElementById("ttmstart").textContent = DATA.ttm_start;
+  document.getElementById("cnt").textContent = DATA.big_cap_count;
+  applyAll();
+}
+
+// 一次性绑定表头排序
+bindTable("table-ttm", false);
+bindTable("table-lfy", true);
+
+// tab 切换
+document.querySelectorAll(".tab").forEach(t=>{
+  t.addEventListener("click",()=>{
+    document.querySelectorAll(".tab").forEach(x=>x.classList.remove("active"));
+    document.querySelectorAll(".panel").forEach(x=>x.classList.remove("active"));
+    t.classList.add("active");
+    document.getElementById("panel-"+t.dataset.tab).classList.add("active");
+  });
+});
+
+// 加载数据：通过服务器打开时优先取最新 /api/data，否则用内嵌数据（双击文件场景）
+(async function(){
+  if(location.protocol.startsWith("http")){
+    try{
+      const res = await fetch("/api/data");
+      if(res.ok){ initData(await res.json()); return; }
+    }catch(e){ /* 回退内嵌数据 */ }
+  }
+  initData(EMBEDDED);
+})();
+
+// 刷新按钮：仅在服务器环境可用，点击后重跑抓取+生成并整页重载
+const refreshBtn = document.getElementById("refresh");
+refreshBtn.addEventListener("click", async ()=>{
+  if(!location.protocol.startsWith("http")){
+    alert("请通过本地服务器打开页面以使用刷新功能：运行 python serve.py 后访问 http://localhost:8000");
+    return;
+  }
+  const old = refreshBtn.textContent;
+  refreshBtn.disabled = true;
+  refreshBtn.textContent = "刷新中…";
+  try{
+    const r = await fetch("/api/refresh", {method:"POST"});
+    if(!r.ok) throw new Error("服务器返回 " + r.status);
+    // 服务端已重新生成 index.html，整页重载以获取最新表头与数据
+    location.reload();
+  }catch(e){
+    alert("刷新失败：" + e.message);
+    refreshBtn.disabled = false;
+    refreshBtn.textContent = old;
+  }
+});
+</script>
+</body>
+</html>
