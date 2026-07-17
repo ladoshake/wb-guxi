@@ -181,5 +181,11 @@ document.querySelectorAll(".tab").forEach(t=>{
 // 直接使用内嵌数据渲染（自包含，可直接打开或静态部署）
 initData(EMBEDDED);
 </script>
+
+<!-- Vercel Web Analytics：在 Vercel 控制台启用“Web Analytics”后，/_vercel/insights/script.js 由平台提供 -->
+<script>
+  window.va = window.va || function () { (window.vaq = window.vaq || []).push(arguments); };
+</script>
+<script defer src="/_vercel/insights/script.js"></script>
 </body>
 </html>
