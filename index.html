@@ -17,6 +17,8 @@
   header p{margin:1px 0;color:var(--sub);font-size:13px}
   .subhead{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap;margin:8px 0 2px}
   .desc{margin:0;color:var(--sub);font-size:clamp(12px,1.1vw,14px);line-height:1.5}
+  .metabox{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+  .meta{margin:0;text-align:right;color:var(--sub);font-size:clamp(12px,1.1vw,14px);line-height:1.4;white-space:nowrap}
   .box{display:flex;align-items:baseline;gap:6px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:6px 12px;white-space:nowrap}
   .num{font-size:13px;font-weight:700;color:var(--brand2)}
   .lab{font-size:13px;color:var(--sub)}
@@ -47,6 +49,14 @@
   .note ul{margin:6px 0;padding-left:20px}
   .note li{margin:3px 0}
   .tag{display:inline-block;background:#eef2ff;color:#4338ca;border-radius:6px;padding:1px 7px;font-size:11px;margin-left:6px}
+  @media (max-width:560px){
+    .subhead{flex-direction:column;align-items:flex-start;gap:8px}
+    .metabox{flex-direction:column;align-items:flex-start;gap:8px}
+    .meta{text-align:left;white-space:normal}
+    .tabs{gap:6px}
+    .tab{padding:8px 12px;font-size:clamp(12px,3.4vw,14px)}
+    .wrap{padding:12px 12px 48px}
+  }
 </style>
 </head>
 <body>
@@ -54,8 +64,11 @@
   <header>
     <h1>A股股息率排名</h1>
     <div class="subhead">
-      <p class="desc">市值 &gt; 1000亿人民币 · 股息率 Top 30。生成日期：<span id="gen"></span> ｜ TTM窗口起点：<span id="ttmstart"></span></p>
-      <div class="box"><div class="num" id="cnt"></div><div class="lab">市值&gt;1000亿公司数</div></div>
+      <p class="desc">市值 &gt; 1000亿人民币 · 股息率 Top 30</p>
+      <div class="metabox">
+        <div class="meta">数据日期：<span id="gen"></span> ｜ TTM计算起点：<span id="ttmstart"></span></div>
+        <div class="box"><div class="num" id="cnt"></div><div class="lab">市值&gt;1000亿公司数</div></div>
+      </div>
     </div>
   </header>
 
