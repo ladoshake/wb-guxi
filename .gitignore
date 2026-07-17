@@ -1,6 +1,7 @@
 # 缓存与生成数据（可重跑脚本再生，不入库）
 data.json
 dividends_cache.json
+names_cache.json
 
 # Python
 __pycache__/

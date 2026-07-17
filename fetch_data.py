@@ -20,6 +20,7 @@ import akshare as ak
 WORKDIR = "/Users/green/WorkBuddy/2026-07-11-16-35-47"
 OUT = f"{WORKDIR}/data.json"
 CACHE = f"{WORKDIR}/dividends_cache.json"
+NAMES_CACHE = f"{WORKDIR}/names_cache.json"
 TODAY = dt.date.today()  # 动态取运行当日，保证自动化每次刷新都用真实日期
 TTM_START = TODAY - dt.timedelta(days=365)
 MARKET_CAP_MIN = 1000.0  # 亿元
@@ -35,15 +36,18 @@ def _clean_name(s):
 
 
 def get_all_a_codes():
-    """直接用交易所静态名录(沪深)构建 代码->完整名称，避免行情源在除权日给出的
-    XD 前缀截断名(如 中国建筑->XD中国建->中国建)；同时跳过北交所(无 >1000亿, 且其接口不稳定)。"""
+    """直接用交易所静态名录(沪深)构建 代码->完整名称。
+    关键：上交所改用「证券全称」字段——它在除权日也不会出现 XD 前缀定宽截断
+    （公司简称 在除权日会变成 XD中国建，证券全称 始终是干净的 中国建筑）；
+    深交所 A股简称 用空格对齐(非截断)，经 _clean_name 归一即可。
+    跳过北交所(无 >1000亿, 且其接口不稳定)。"""
     out, seen = [], set()
-    # 上交所：主板A股 + 科创板；公司简称最干净(无 XD/无截断)，回退证券简称
+    # 上交所：主板A股 + 科创板；优先 证券全称(不受 XD 定宽截断)，回退 公司简称/证券简称
     for board in ("主板A股", "科创板"):
         sh = ak.stock_info_sh_name_code(symbol=board)
         for _, r in sh.iterrows():
             code = str(r["证券代码"]).zfill(6)
-            name = _clean_name(r.get("公司简称") or r.get("证券简称"))
+            name = _clean_name(r.get("证券全称") or r.get("公司简称") or r.get("证券简称"))
             if code and code not in seen and name:
                 out.append((code, name)); seen.add(code)
     # 深交所：A股简称(含对齐空格/全角字母，未截断) 经 _clean_name 归一
@@ -56,6 +60,34 @@ def get_all_a_codes():
         name = _clean_name(r.get("A股简称"))
         if code and code not in seen and name:
             out.append((code, name)); seen.add(code)
+    return out
+
+
+# ------------------------- 1b. 名称缓存(跨运行持久化，自愈) -------------------------
+def load_names_cache():
+    try:
+        with open(NAMES_CACHE, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def save_names_cache(cache):
+    with open(NAMES_CACHE, "w", encoding="utf-8") as f:
+        json.dump(cache, f, ensure_ascii=False, indent=2)
+
+
+def reconcile_names(live, cache):
+    """返回 code->最佳名称：取「本次实时名」与「历史缓存名」中去 XD 后较长者。
+    自愈原理：非除权日名录返回完整名(如 中国建筑)，除权日返回截断名(中国建)，
+    缓存永久保留更长者，杜绝任何单一来源的偶发截断。"""
+    out = {}
+    for code, nm in live.items():
+        cur = _clean_name(nm)
+        prev = _clean_name(cache.get(code, ""))
+        best = cur if len(cur) >= len(prev) else prev
+        if best:
+            out[code] = best
     return out
 
 
@@ -165,9 +197,13 @@ def get_dividends(code, cache):
 def main():
     print("[1/4] 获取A股代码列表 ...")
     codes = get_all_a_codes()
-    # 代码->完整名称映射(akshare 证券全称，避免腾讯行情简称被截断，如"中国建筑"→"中国建")
-    name_map = {c: n for c, n in codes}
-    print(f"      A股数: {len(codes)}")
+    # 代码->完整名称映射：本次实时名 与 历史缓存名 取较长者(自愈，杜绝除权日 XD 截断)
+    live_map = {c: n for c, n in codes}
+    names_cache = load_names_cache()
+    name_map = reconcile_names(live_map, names_cache)
+    names_cache.update(name_map)
+    save_names_cache(names_cache)
+    print(f"      A股数: {len(codes)} | 名称缓存: {len(name_map)} 条")
 
     print("[2/4] 拉取腾讯市值并筛选 >1000亿 ...")
     mv_map = fetch_market_caps(codes)
