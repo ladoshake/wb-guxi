@@ -99,6 +99,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .panel{display:none}
   .panel.active{display:block}
   table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;font-size:13.5px}
+  .table-wrap{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
   th,td{padding:9px 10px;text-align:left;border-bottom:1px solid var(--line);white-space:nowrap}
   th{background:#f0f1f4;color:#374151;font-weight:600;cursor:pointer;user-select:none;position:relative}
   th.sort-asc::after{content:" ▲";font-size:10px;color:var(--brand)}
@@ -145,6 +146,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   </div>
 
   <div class="panel active" id="panel-ttm">
+    <div class="table-wrap">
     <table id="table-ttm">
       <thead><tr>
         <th data-k="rank">排名</th><th data-k="name">名称</th><th data-k="code">代码</th>
@@ -153,9 +155,11 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       </tr></thead>
       <tbody></tbody>
     </table>
+    </div>
   </div>
 
   <div class="panel" id="panel-lfy">
+    <div class="table-wrap">
     <table id="table-lfy">
       <thead><tr>
         <th data-k="rank">排名</th><th data-k="name">名称</th><th data-k="code">代码</th>
@@ -164,6 +168,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       </tr></thead>
       <tbody></tbody>
     </table>
+    </div>
   </div>
 
   <div class="note">
