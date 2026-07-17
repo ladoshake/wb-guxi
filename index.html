@@ -21,7 +21,10 @@
   .num{font-size:13px;font-weight:700;color:var(--brand2)}
   .lab{font-size:13px;color:var(--sub)}
   .tabs{display:flex;gap:8px;margin:14px 0 8px}
-  .tab{padding:9px 18px;border:1px solid var(--line);border-radius:999px;background:var(--card);cursor:pointer;font-size:14px;font-weight:600;color:var(--sub)}
+  .tab{padding:7px 20px;display:flex;flex-direction:column;align-items:center;gap:1px;border:1px solid var(--line);border-radius:999px;background:var(--card);cursor:pointer;font-size:14px;font-weight:600;color:var(--sub);line-height:1.2}
+  .tab-main{white-space:nowrap}
+  .tab-sub{font-size:11px;font-weight:400;opacity:.78}
+  .tab.active .tab-sub{opacity:.92}
   .tab.active{background:var(--brand2);color:#fff;border-color:var(--brand2)}
   .tab.alt.active{background:var(--brand2);border-color:var(--brand2)}
   .panel{display:none}
@@ -58,8 +61,8 @@
   </header>
 
   <div class="tabs">
-    <div class="tab active" data-tab="ttm">TTM 股息率</div>
-    <div class="tab alt" data-tab="lfy">LFY 股息率</div>
+    <div class="tab active" data-tab="ttm"><span class="tab-main">TTM 股息率</span><span class="tab-sub">最近12个月</span></div>
+    <div class="tab alt" data-tab="lfy"><span class="tab-main">LFY 股息率</span><span class="tab-sub">最近财年</span></div>
   </div>
 
   <div class="panel active" id="panel-ttm">
