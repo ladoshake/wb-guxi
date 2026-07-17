@@ -23,6 +23,8 @@ def rank_rows(rows, kind):
             "dps": round((r.get(per10_key, 0) or 0) / 10.0, 3),  # 元/股
             "yield": r[yield_key],
             "fy": r.get("lfy_year", "") if kind == "lfy" else "",
+            "ttm_div_count": r.get("ttm_div_count", 0),
+            "lfy_div_count": r.get("lfy_div_count", 0),
         }
         if kind == "lfy":
             # 前年 / 大前年股息率(相对 LFY 财年, 口径同 LFY)
@@ -151,7 +153,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       <thead><tr>
         <th data-k="rank">排名</th><th data-k="name">名称</th><th data-k="code">代码</th>
         <th data-k="price">现价(元)</th><th data-k="total_mv_yi">总市值(亿)</th>
-        <th data-k="dps">每股分红(元/股)</th><th data-k="yield">TTM股息率</th>
+        <th data-k="dps">每股分红(元/股)</th><th data-k="div_count">分红次数</th><th data-k="yield">TTM股息率</th>
       </tr></thead>
       <tbody></tbody>
     </table>
@@ -164,7 +166,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
       <thead><tr>
         <th data-k="rank">排名</th><th data-k="name">名称</th><th data-k="code">代码</th>
         <th data-k="price">现价(元)</th><th data-k="total_mv_yi">总市值(亿)</th>
-        <th data-k="dps">每股分红(元/股)</th><th data-k="yield">LFY股息率</th><th data-k="prev_yield">/*__PREV_HDR__*/</th><th data-k="prev2_yield">/*__PREV2_HDR__*/</th>
+        <th data-k="dps">每股分红(元/股)</th><th data-k="div_count">分红次数</th><th data-k="yield">LFY股息率</th><th data-k="prev_yield">/*__PREV_HDR__*/</th><th data-k="prev2_yield">/*__PREV2_HDR__*/</th>
       </tr></thead>
       <tbody></tbody>
     </table>
@@ -194,6 +196,8 @@ const fmt = (n,d=2)=> (n==null||isNaN(n))?"-":Number(n).toLocaleString("zh-CN",{
 // 排序状态：每个表独立维护，便于刷新后保留用户排序
 const sortState = { ttm:{key:"yield",dir:-1}, lfy:{key:"yield",dir:-1} };
 
+function divCountOf(r, withFy){ return withFy ? r.lfy_div_count : r.ttm_div_count; }
+
 function renderTable(tableId, rows, withFy){
   const tbody = document.querySelector(`#${tableId} tbody`);
   tbody.innerHTML = "";
@@ -207,6 +211,7 @@ function renderTable(tableId, rows, withFy){
       <td>${fmt(r.price)}</td>
       <td>${fmt(r.total_mv_yi,0)}</td>
       <td>${fmt(r.dps,3)}</td>
+      <td class="cnt">${divCountOf(r, withFy)}</td>
       ${lfyCell}${prev}`;
     tbody.appendChild(tr);
   });
@@ -217,7 +222,8 @@ function applyTable(tableId, withFy){
   const rows = (withFy ? DATA.lfy : DATA.ttm).slice();
   const sk = sortState[key];
   rows.sort((a,b)=>{
-    let va=a[sk.key], vb=b[sk.key];
+    let va = sk.key==="div_count" ? divCountOf(a, withFy) : a[sk.key];
+    let vb = sk.key==="div_count" ? divCountOf(b, withFy) : b[sk.key];
     if(typeof va==="string"){ return sk.dir*va.localeCompare(vb,"zh"); }
     return sk.dir*(va-vb);
   });

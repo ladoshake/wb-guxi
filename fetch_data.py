@@ -246,12 +246,16 @@ def main():
         name = name_map.get(code, name)
         rows = cache.get(code, [])
         # TTM: 公告日(实施方案公告日期) ∈ [TTM_START, TODAY]
-        ttm_per10 = sum(x["per10"] for x in rows
-                        if TTM_START <= dt.date.fromisoformat(x["announce_date"]) <= TODAY)
+        ttm_rows = [x for x in rows
+                    if TTM_START <= dt.date.fromisoformat(x["announce_date"]) <= TODAY]
+        ttm_per10 = sum(x["per10"] for x in ttm_rows)
+        ttm_div_count = len(ttm_rows)          # TTM 窗口内分红次数(多次分红分别计数)
         # LFY: 最近财年(最大 fy) 全部分红(一年内多次分红已相加)
         fy_years = sorted({x["fy"] for x in rows}, reverse=True)
         lfy_year = fy_years[0] if fy_years else ""
         lfy_per10 = fy_sum(rows, lfy_year)
+        lfy_div_count = (sum(1 for x in rows if x["fy"] == lfy_year)
+                         if isinstance(lfy_year, int) else 0)  # 该财年分红次数
         # 前年 / 大前年(相对 LFY 财年, 计算口径同 LFY)
         prev_year = (lfy_year - 1) if isinstance(lfy_year, int) else ""
         prev2_year = (lfy_year - 2) if isinstance(lfy_year, int) else ""
@@ -266,7 +270,9 @@ def main():
             "code": code, "name": name,
             "price": round(price, 2), "total_mv_yi": round(mv, 2),
             "ttm_per10": round(ttm_per10, 4), "ttm_yield": round(ttm_yield, 3),
+            "ttm_div_count": ttm_div_count,
             "lfy_year": lfy_year, "lfy_per10": round(lfy_per10, 4), "lfy_yield": round(lfy_yield, 3),
+            "lfy_div_count": lfy_div_count,
             "prev_year": prev_year, "prev_per10": round(prev_per10, 4), "prev_yield": round(prev_yield, 3),
             "prev2_year": prev2_year, "prev2_per10": round(prev2_per10, 4), "prev2_yield": round(prev2_yield, 3),
         })
