@@ -4,7 +4,7 @@
 A股 市值>1000亿 公司 股息率排名 —— 数据抓取与计算
 - 市值来源: 腾讯 gtimg 实时行情 (总市值, 单位 亿元, 字段索引44)
 - 分红来源: akshare stock_dividend_cninfo (巨潮历史分红, 含年度/中期/特别, 派息比例=元/10股)
-- TTM 股息率 = 近12个月(除权日落入窗口)现金分红合计数 / 当前总市值
+- TTM 股息率 = 近12个月(实施方案公告日落入窗口)现金分红合计数 / 当前总市值
 - LFY 股息率 = 最近一个完整财年(按报告时间取最大年)现金分红合计数 / 当前总市值
 输出: data.json (供前端网页使用)；同时缓存分红到 dividends_cache.json
 """
@@ -164,17 +164,27 @@ def parse_div_rows(raw):
             ex_date = None
             if exd is not None and str(exd) not in ("NaT", "None", ""):
                 ex_date = dt.datetime.strptime(str(exd), "%Y-%m-%d").date()
-            if ex_date is None:
+            # 公告日(实施方案公告日期)：TTM 窗口判定以此为准
+            ann = r.get("实施方案公告日期")
+            announce_date = None
+            if ann is not None and str(ann) not in ("NaT", "None", ""):
+                announce_date = dt.datetime.strptime(str(ann), "%Y-%m-%d").date()
+            # 公告日缺失时回退除权日，避免漏算
+            if announce_date is None:
+                announce_date = ex_date
+            if announce_date is None:
                 continue
-            # 财年: 取自报告时间(如 "2025年报"/"2025三季报"); 缺失则用除权日年份
+            # 财年: 取自报告时间(如 "2025年报"/"2025三季报"); 缺失则用公告日年份
             fy = None
             rt = str(r.get("报告时间", "") or "")
             m = re.search(r"(\d{4})", rt)
             if m:
                 fy = int(m.group(1))
             else:
-                fy = ex_date.year
-            rows.append({"ex_date": ex_date.isoformat(), "per10": per10, "fy": fy,
+                fy = announce_date.year
+            rows.append({"ex_date": ex_date.isoformat() if ex_date else "",
+                         "announce_date": announce_date.isoformat(),
+                         "per10": per10, "fy": fy,
                          "type": str(r.get("分红类型", "")), "desc": str(r.get("实施方案分红说明", ""))})
         except Exception:
             continue
@@ -235,9 +245,9 @@ def main():
         # 优先使用 akshare 完整名称，回退腾讯简称
         name = name_map.get(code, name)
         rows = cache.get(code, [])
-        # TTM: 除权日 ∈ [TTM_START, TODAY]
+        # TTM: 公告日(实施方案公告日期) ∈ [TTM_START, TODAY]
         ttm_per10 = sum(x["per10"] for x in rows
-                        if TTM_START <= dt.date.fromisoformat(x["ex_date"]) <= TODAY)
+                        if TTM_START <= dt.date.fromisoformat(x["announce_date"]) <= TODAY)
         # LFY: 最近财年(最大 fy) 全部分红(一年内多次分红已相加)
         fy_years = sorted({x["fy"] for x in rows}, reverse=True)
         lfy_year = fy_years[0] if fy_years else ""
