@@ -150,7 +150,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
   <div class="capsel" id="capsel">
     <div class="cap active" data-cap="gt1000">市值 &gt; 1000亿</div>
-    <div class="cap" data-cap="mid500">市值 &gt; 500亿（≤1000亿）</div>
+    <div class="cap" data-cap="mid500">1000亿 ≥ 市值 &gt; 500亿</div>
   </div>
 
   <div class="tabs">
@@ -187,7 +187,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   <div class="note">
     <h3>计算口径说明</h3>
     <ul>
-      <li><b>市值筛选</b>：提供两档——市值 &gt; 1000 亿元、市值 &gt; 500 亿元（≤1000 亿元），分别取各档内股息率 Top 30。</li>
+      <li><b>市值筛选</b>：提供两档——市值 &gt; 1000 亿元、1000 亿元 ≥ 市值 &gt; 500 亿元，分别取各档内股息率 Top 30。</li>
       <li><b>股息率</b>：现金分红合计 ÷ 当前总市值 × 100%。</li>
       <li><b>TTM</b>：实施方案公告日在近 12 个月内的现金分红之和。</li>
       <li><b>LFY</b>：最近一个完整财年的现金分红之和（一年内多次分红全部相加）。</li>
