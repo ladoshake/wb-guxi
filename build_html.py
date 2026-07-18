@@ -140,7 +140,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   <header>
     <h1>A股股息率排名</h1>
     <div class="subhead">
-      <p class="desc" id="desc">市值 &gt; 1000亿人民币 · 股息率 Top 30</p>
+      <p class="desc" id="desc">市值 &gt; 1000亿 · 股息率 Top 30</p>
       <div class="metabox">
         <div class="meta">数据日期：<span id="gen"></span> ｜ TTM计算起点：<span id="ttmstart"></span></div>
         <div class="box"><div class="lab" id="cntlab">市值&gt;1000亿公司数</div><div class="num" id="cnt"></div></div>
@@ -150,7 +150,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 
   <div class="capsel" id="capsel">
     <div class="cap active" data-cap="gt1000">市值 &gt; 1000亿</div>
-    <div class="cap" data-cap="mid500">500亿 &lt; 市值 ≤ 1000亿</div>
+    <div class="cap" data-cap="mid500">市值 &gt; 500亿（≤1000亿）</div>
   </div>
 
   <div class="tabs">
@@ -187,7 +187,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   <div class="note">
     <h3>计算口径说明</h3>
     <ul>
-      <li><b>市值筛选</b>：提供两档——市值 &gt; 1000 亿元、500 亿元 &lt; 市值 ≤ 1000 亿元，分别取各档内股息率 Top 30。</li>
+      <li><b>市值筛选</b>：提供两档——市值 &gt; 1000 亿元、市值 &gt; 500 亿元（≤1000 亿元），分别取各档内股息率 Top 30。</li>
       <li><b>股息率</b>：现金分红合计 ÷ 当前总市值 × 100%。</li>
       <li><b>TTM</b>：实施方案公告日在近 12 个月内的现金分红之和。</li>
       <li><b>LFY</b>：最近一个完整财年的现金分红之和（一年内多次分红全部相加）。</li>
