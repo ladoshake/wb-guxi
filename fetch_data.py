@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-A股 市值>1000亿 公司 股息率排名 —— 数据抓取与计算
+A股 股息率排名（按市值分档）—— 数据抓取与计算
+- 市值分档: 仅取 市值>500亿 的股票，再分为两档：>1000亿、500-1000亿（各档内取股息率 Top30）
 - 市值来源: 腾讯 gtimg 实时行情 (总市值, 单位 亿元, 字段索引44)
 - 分红来源: akshare stock_dividend_cninfo (巨潮历史分红, 含年度/中期/特别, 派息比例=元/10股)
 - TTM 股息率 = 近12个月(实施方案公告日落入窗口)现金分红合计数 / 当前总市值
@@ -23,7 +24,12 @@ CACHE = f"{WORKDIR}/dividends_cache.json"
 NAMES_CACHE = f"{WORKDIR}/names_cache.json"
 TODAY = dt.date.today()  # 动态取运行当日，保证自动化每次刷新都用真实日期
 TTM_START = TODAY - dt.timedelta(days=365)
-MARKET_CAP_MIN = 1000.0  # 亿元
+# 市值分档：仅抓取并展示这两档，避免全市场数千只小市值股的超长抓取
+FETCH_FLOOR = 500.0  # 亿元：只抓取 市值>500亿 的股票（覆盖下面两档）
+TIERS = [
+    ("gt1000", "市值 > 1000亿", lambda mv: mv > 1000.0),
+    ("mid500", "500亿 < 市值 ≤ 1000亿", lambda mv: 500.0 < mv <= 1000.0),
+]
 
 # ------------------------- 1. A股代码列表 -------------------------
 def _clean_name(s):
@@ -192,13 +198,15 @@ def parse_div_rows(raw):
 
 
 def get_dividends(code, cache):
-    if code in cache:
-        return cache[code]
+    """每次都重新抓取最新分红；仅当抓取异常时回退到已有缓存(保证当天榜单不空)。
+    抓取成功但返回空、且历史有数据时，疑似瞬时空响应，保留旧缓存。"""
     try:
         df = ak.stock_dividend_cninfo(symbol=code)
         rows = parse_div_rows(df)
     except Exception:
-        rows = []
+        return cache.get(code, [])
+    if not rows and code in cache and cache[code]:
+        return cache[code]
     cache[code] = rows
     return rows
 
@@ -215,33 +223,32 @@ def main():
     save_names_cache(names_cache)
     print(f"      A股数: {len(codes)} | 名称缓存: {len(name_map)} 条")
 
-    print("[2/4] 拉取腾讯市值并筛选 >1000亿 ...")
+    print("[2/4] 拉取腾讯市值并筛选 >500亿(覆盖两档) ...")
     mv_map = fetch_market_caps(codes)
-    big = [(c, mv_map[c]) for c, n in codes if c in mv_map and mv_map[c][1] > MARKET_CAP_MIN]
-    big.sort(key=lambda x: x[1][1], reverse=True)
-    print(f"      市值>1000亿 公司数: {len(big)}")
+    elig = [(c, mv_map[c]) for c, n in codes if c in mv_map and mv_map[c][1] > FETCH_FLOOR]
+    elig.sort(key=lambda x: x[1][1], reverse=True)
+    print(f"      市值>500亿 公司数: {len(elig)} (含 >1000亿 与 500-1000亿 两档)")
 
-    print("[3/4] 抓取分红历史(巨潮, 顺序执行+缓存) ...")
+    print("[3/4] 全量刷新分红历史(巨潮, 顺序执行；缓存仅作失败兜底) ...")
     cache = load_cache()
-    need = [c for c, _ in big if c not in cache]
-    print(f"      需新抓取: {len(need)} 只")
+    print(f"      待刷新: {len(elig)} 只（含两档）")
 
     # 注意: stock_dividend_cninfo 依赖 py_mini_racer(V8), 非线程安全, 必须顺序执行于主线程
     done = 0
-    for c, _ in big:
+    for c, _ in elig:
         get_dividends(c, cache)
         done += 1
-        if done % 20 == 0 or done == len(big):
+        if done % 20 == 0 or done == len(elig):
             save_cache(cache)
-            print(f"      已抓取 {done}/{len(big)}")
+            print(f"      已抓取 {done}/{len(elig)}")
     save_cache(cache)
 
-    print("[4/4] 计算 TTM / LFY 股息率并排名 ...")
+    print("[4/4] 计算 TTM / LFY 股息率并按市值分档排名 ...")
     def fy_sum(rows, y):
         # 同一财年内可能多次分红(年度/中期/特别)，全部相加
         return sum(x["per10"] for x in rows if x["fy"] == y) if y != "" else 0.0
     records = []
-    for code, (name, mv, price) in big:
+    for code, (name, mv, price) in elig:
         # 优先使用 akshare 完整名称，回退腾讯简称
         name = name_map.get(code, name)
         rows = cache.get(code, [])
@@ -277,21 +284,23 @@ def main():
             "prev2_year": prev2_year, "prev2_per10": round(prev2_per10, 4), "prev2_yield": round(prev2_yield, 3),
         })
 
-    ttm_rank = sorted([r for r in records if r["ttm_yield"] > 0], key=lambda x: x["ttm_yield"], reverse=True)[:30]
-    lfy_rank = sorted([r for r in records if r["lfy_yield"] > 0], key=lambda x: x["lfy_yield"], reverse=True)[:30]
+    tiers_out = []
+    for key, label, pred in TIERS:
+        sub = [r for r in records if pred(r["total_mv_yi"])]
+        ttm_rank = sorted([r for r in sub if r["ttm_yield"] > 0], key=lambda x: x["ttm_yield"], reverse=True)[:30]
+        lfy_rank = sorted([r for r in sub if r["lfy_yield"] > 0], key=lambda x: x["lfy_yield"], reverse=True)[:30]
+        tiers_out.append({"key": key, "label": label, "count": len(sub),
+                          "ttm_rank": ttm_rank, "lfy_rank": lfy_rank})
+        print(f"      档[{label}] 公司数={len(sub)} TTM前3={[(r['name'], r['ttm_yield']) for r in ttm_rank[:3]]}")
 
     out = {
         "generated_at": TODAY.isoformat(),
-        "market_cap_min_yi": MARKET_CAP_MIN,
-        "big_cap_count": len(big),
         "ttm_start": TTM_START.isoformat(),
-        "ttm_rank": ttm_rank, "lfy_rank": lfy_rank, "all": records,
+        "tiers": tiers_out,
     }
     with open(OUT, "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False, indent=2)
     print(f"      写入 {OUT}")
-    print("      TTM 前5:", [(r["name"], r["ttm_yield"]) for r in ttm_rank[:5]])
-    print("      LFY 前5:", [(r["name"], r["lfy_yield"], r["lfy_year"]) for r in lfy_rank[:5]])
 
 
 if __name__ == "__main__":

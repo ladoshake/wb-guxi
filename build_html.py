@@ -40,22 +40,25 @@ def build():
     with open(DATA, encoding="utf-8") as f:
         data = json.load(f)
 
-    ttm = rank_rows(data["ttm_rank"], "ttm")
-    lfy = rank_rows(data["lfy_rank"], "lfy")
+    tiers_html = []
+    for t in data["tiers"]:
+        ttm = rank_rows(t["ttm_rank"], "ttm")
+        lfy = rank_rows(t["lfy_rank"], "lfy")
+        tiers_html.append({
+            "key": t["key"], "label": t["label"], "count": t["count"],
+            "ttm": ttm, "lfy": lfy,
+        })
 
-    # 表头年份：取 LFY 榜「最近财年」的众数，表头直接显示具体年份
-    years = [int(r["fy"]) for r in lfy if r.get("fy")]
+    # 表头年份：取全部档 LFY 榜「最近财年」的众数，表头直接显示具体年份
+    years = [int(r["fy"]) for tier in tiers_html for r in tier["lfy"] if r.get("fy")]
     modal = max(set(years), key=years.count) if years else None
     prev_hdr = f"{modal - 1}年股息率" if modal is not None else "前年股息率"
     prev2_hdr = f"{modal - 2}年股息率" if modal is not None else "大前年股息率"
 
     payload = {
         "generated_at": data["generated_at"],
-        "market_cap_min_yi": data["market_cap_min_yi"],
-        "big_cap_count": data["big_cap_count"],
         "ttm_start": data["ttm_start"],
-        "ttm": ttm,
-        "lfy": lfy,
+        "tiers": tiers_html,
     }
 
     html = HTML_TEMPLATE
@@ -64,7 +67,7 @@ def build():
     html = html.replace("/*__PREV2_HDR__*/", prev2_hdr)
     with open(OUT, "w", encoding="utf-8") as f:
         f.write(html)
-    print(f"[html] 生成 {OUT}  TTM={len(ttm)} LFY={len(lfy)} | 表头: {prev_hdr} / {prev2_hdr}")
+    print(f"[html] 生成 {OUT}  档数={len(tiers_html)} TTM={len(tiers_html[0]['ttm'])} LFY={len(tiers_html[0]['lfy'])} | 表头: {prev_hdr} / {prev2_hdr}")
 
 
 HTML_TEMPLATE = r"""<!DOCTYPE html>
@@ -98,6 +101,9 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .tab.active .tab-sub{opacity:.92}
   .tab.active{background:var(--brand2);color:#fff;border-color:var(--brand2)}
   .tab.alt.active{background:var(--brand2);border-color:var(--brand2)}
+  .capsel{display:flex;gap:8px;margin:14px 0 2px;flex-wrap:wrap}
+  .cap{padding:6px 16px;border:1px solid var(--line);border-radius:999px;background:var(--card);cursor:pointer;font-size:13px;font-weight:600;color:var(--sub);line-height:1.2;white-space:nowrap}
+  .cap.active{background:var(--brand);color:#fff;border-color:var(--brand)}
   .panel{display:none}
   .panel.active{display:block}
   table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;font-size:13.5px}
@@ -134,13 +140,18 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   <header>
     <h1>A股股息率排名</h1>
     <div class="subhead">
-      <p class="desc">市值 &gt; 1000亿人民币 · 股息率 Top 30</p>
+      <p class="desc" id="desc">市值 &gt; 1000亿人民币 · 股息率 Top 30</p>
       <div class="metabox">
         <div class="meta">数据日期：<span id="gen"></span> ｜ TTM计算起点：<span id="ttmstart"></span></div>
-        <div class="box"><div class="lab">市值&gt;1000亿公司数</div><div class="num" id="cnt"></div></div>
+        <div class="box"><div class="lab" id="cntlab">市值&gt;1000亿公司数</div><div class="num" id="cnt"></div></div>
       </div>
     </div>
   </header>
+
+  <div class="capsel" id="capsel">
+    <div class="cap active" data-cap="gt1000">市值 &gt; 1000亿</div>
+    <div class="cap" data-cap="mid500">500亿 &lt; 市值 ≤ 1000亿</div>
+  </div>
 
   <div class="tabs">
     <div class="tab active" data-tab="ttm"><span class="tab-main">TTM 股息率</span><span class="tab-sub">最近12个月</span></div>
@@ -176,7 +187,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   <div class="note">
     <h3>计算口径说明</h3>
     <ul>
-      <li><b>市值筛选</b>：按总市值取大于 1000 亿元的公司。</li>
+      <li><b>市值筛选</b>：提供两档——市值 &gt; 1000 亿元、500 亿元 &lt; 市值 ≤ 1000 亿元，分别取各档内股息率 Top 30。</li>
       <li><b>股息率</b>：现金分红合计 ÷ 当前总市值 × 100%。</li>
       <li><b>TTM</b>：实施方案公告日在近 12 个月内的现金分红之和。</li>
       <li><b>LFY</b>：最近一个完整财年的现金分红之和（一年内多次分红全部相加）。</li>
@@ -190,13 +201,18 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 <script>
 const EMBEDDED = /*__DATA__*/;
 let DATA = EMBEDDED;
+let currentCap = DATA.tiers[0].key;   // 当前市值档
+let currentTab = "ttm";               // 当前股息率口径
 
 const fmt = (n,d=2)=> (n==null||isNaN(n))?"-":Number(n).toLocaleString("zh-CN",{minimumFractionDigits:d,maximumFractionDigits:d});
 
-// 排序状态：每个表独立维护，便于刷新后保留用户排序
-const sortState = { ttm:{key:"yield",dir:-1}, lfy:{key:"yield",dir:-1} };
+// 排序状态：按「档_口径」分别维护，切换时保留各自排序
+const sortState = {};
+const sortKey = (cap,kind)=> cap+"_"+kind;
 
 function divCountOf(r, withFy){ return withFy ? r.lfy_div_count : r.ttm_div_count; }
+function getTier(key){ return DATA.tiers.find(t=>t.key===key); }
+function rowsFor(cap, kind){ const t=getTier(cap); return (kind==="ttm"?t.ttm:t.lfy).slice(); }
 
 function renderTable(tableId, rows, withFy){
   const tbody = document.querySelector(`#${tableId} tbody`);
@@ -218,9 +234,10 @@ function renderTable(tableId, rows, withFy){
 }
 
 function applyTable(tableId, withFy){
-  const key = withFy ? "lfy" : "ttm";
-  const rows = (withFy ? DATA.lfy : DATA.ttm).slice();
-  const sk = sortState[key];
+  const kind = withFy ? "lfy" : "ttm";
+  const skey = sortKey(currentCap, kind);
+  const sk = sortState[skey] || (sortState[skey] = {key:"yield", dir:-1});
+  const rows = rowsFor(currentCap, kind);
   rows.sort((a,b)=>{
     let va = sk.key==="div_count" ? divCountOf(a, withFy) : a[sk.key];
     let vb = sk.key==="div_count" ? divCountOf(b, withFy) : b[sk.key];
@@ -228,20 +245,34 @@ function applyTable(tableId, withFy){
     return sk.dir*(va-vb);
   });
   renderTable(tableId, rows, withFy);
+  // 同步表头排序箭头
+  const table = document.getElementById(tableId);
+  table.querySelectorAll("th").forEach(x=>{
+    x.classList.remove("sort-asc","sort-desc");
+    if(x.dataset.k===sk.key) x.classList.add(sk.dir===1?"sort-asc":"sort-desc");
+  });
 }
 
-function applyAll(){ applyTable("table-ttm", false); applyTable("table-lfy", true); }
+function renderAll(){
+  applyTable("table-ttm", false);
+  applyTable("table-lfy", true);
+  // 副标题与「公司数」随当前档更新
+  const t = getTier(currentCap);
+  document.getElementById("desc").textContent = t.label + " · 股息率 Top 30";
+  document.getElementById("cntlab").textContent = t.label.replace(/\s/g,"") + "公司数";
+  document.getElementById("cnt").textContent = t.count;
+}
 
 function bindTable(tableId, withFy){
   const table = document.getElementById(tableId);
   table.querySelectorAll("th").forEach(th=>{
     th.addEventListener("click",()=>{
-      const key = withFy ? "lfy" : "ttm";
+      const kind = withFy ? "lfy" : "ttm";
       const kp = th.dataset.k;
-      if(sortState[key].key===kp){ sortState[key].dir *= -1; }
-      else { sortState[key].key=kp; sortState[key].dir = (kp==="rank"||kp==="name"||kp==="code")?1:-1; }
-      table.querySelectorAll("th").forEach(x=>x.classList.remove("sort-asc","sort-desc"));
-      th.classList.add(sortState[key].dir===1?"sort-asc":"sort-desc");
+      const skey = sortKey(currentCap, kind);
+      const sk = sortState[skey] || (sortState[skey] = {key:"yield", dir:-1});
+      if(sk.key===kp){ sk.dir *= -1; }
+      else { sk.key=kp; sk.dir = (kp==="rank"||kp==="name"||kp==="code")?1:-1; }
       applyTable(tableId, withFy);
     });
   });
@@ -251,21 +282,32 @@ function initData(d){
   DATA = d;
   document.getElementById("gen").textContent = DATA.generated_at;
   document.getElementById("ttmstart").textContent = DATA.ttm_start;
-  document.getElementById("cnt").textContent = DATA.big_cap_count;
-  applyAll();
+  renderAll();
 }
 
 // 一次性绑定表头排序
 bindTable("table-ttm", false);
 bindTable("table-lfy", true);
 
-// tab 切换
+// 市值档切换
+document.querySelectorAll(".cap").forEach(c=>{
+  c.addEventListener("click",()=>{
+    document.querySelectorAll(".cap").forEach(x=>x.classList.remove("active"));
+    c.classList.add("active");
+    currentCap = c.dataset.cap;
+    renderAll();
+  });
+});
+
+// TTM / LFY 口径切换
 document.querySelectorAll(".tab").forEach(t=>{
   t.addEventListener("click",()=>{
     document.querySelectorAll(".tab").forEach(x=>x.classList.remove("active"));
     document.querySelectorAll(".panel").forEach(x=>x.classList.remove("active"));
     t.classList.add("active");
     document.getElementById("panel-"+t.dataset.tab).classList.add("active");
+    currentTab = t.dataset.tab;
+    renderAll();   // 重新渲染并同步表头排序箭头
   });
 });
 
