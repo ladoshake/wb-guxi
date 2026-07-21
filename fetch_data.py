@@ -252,6 +252,8 @@ def main():
         # 优先使用 akshare 完整名称，回退腾讯简称
         name = name_map.get(code, name)
         rows = cache.get(code, [])
+        # 除权日判定：今日是否为其除权日(任一分红的除权日==今日)；是则前端显示 XD 前缀，过后自动恢复
+        ex_today = any(str(x.get("ex_date", "")) == TODAY.isoformat() for x in rows)
         # TTM: 公告日(实施方案公告日期) ∈ [TTM_START, TODAY]
         ttm_rows = [x for x in rows
                     if TTM_START <= dt.date.fromisoformat(x["announce_date"]) <= TODAY]
@@ -274,7 +276,7 @@ def main():
         prev_yield = (prev_per10 / 10.0 / price * 100.0) if price > 0 else 0.0
         prev2_yield = (prev2_per10 / 10.0 / price * 100.0) if price > 0 else 0.0
         records.append({
-            "code": code, "name": name,
+            "code": code, "name": name, "ex_today": ex_today,
             "price": round(price, 2), "total_mv_yi": round(mv, 2),
             "ttm_per10": round(ttm_per10, 4), "ttm_yield": round(ttm_yield, 3),
             "ttm_div_count": ttm_div_count,
