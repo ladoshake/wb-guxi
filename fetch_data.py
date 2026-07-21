@@ -155,17 +155,40 @@ def save_cache(cache):
         json.dump(cache, f, ensure_ascii=False)
 
 
+def _parse_ratio(v):
+    """把 派息比例/送股比例/转增比例 解析为 float；缺失/NaN/空 返回 0.0。"""
+    if v is None or str(v) in ("None", "nan", "NaN", ""):
+        return 0.0
+    try:
+        f = float(v)
+        return f if f == f else 0.0   # NaN -> 0.0
+    except (ValueError, TypeError):
+        return 0.0
+
+
 def parse_div_rows(raw):
-    """raw: akshare DataFrame -> list of {ex_date, per10, fy}"""
+    """raw: akshare DataFrame -> list of {ex_date, per10, fy, tag}
+    tag(除权标记): 含现金派息=XD, 含送股/转增=XR, 两者皆有=DR, 无=空串。
+    保留「现金派息 或 送转」任一项>0 的记录(纯 0 丢弃)，以便精确判断除权类型。"""
     rows = []
     for _, r in raw.iterrows():
         try:
-            per10 = r.get("派息比例")
-            if per10 in (None, "", "None") or (isinstance(per10, float) and per10 != per10):
+            per10 = _parse_ratio(r.get("派息比例"))
+            sg = _parse_ratio(r.get("送股比例"))
+            zz = _parse_ratio(r.get("转增比例"))
+            has_share = (sg > 0) or (zz > 0)
+            # 仅保留确有分红/送转的记录
+            if per10 <= 0 and not has_share:
                 continue
-            per10 = float(per10)
-            if per10 <= 0:
-                continue
+            # 除权标记
+            if per10 > 0 and has_share:
+                tag = "DR"
+            elif per10 > 0:
+                tag = "XD"
+            elif has_share:
+                tag = "XR"
+            else:
+                tag = ""
             exd = r.get("除权日")
             ex_date = None
             if exd is not None and str(exd) not in ("NaT", "None", ""):
@@ -190,7 +213,7 @@ def parse_div_rows(raw):
                 fy = announce_date.year
             rows.append({"ex_date": ex_date.isoformat() if ex_date else "",
                          "announce_date": announce_date.isoformat(),
-                         "per10": per10, "fy": fy,
+                         "per10": per10, "fy": fy, "tag": tag,
                          "type": str(r.get("分红类型", "")), "desc": str(r.get("实施方案分红说明", ""))})
         except Exception:
             continue
@@ -252,19 +275,20 @@ def main():
         # 优先使用 akshare 完整名称，回退腾讯简称
         name = name_map.get(code, name)
         rows = cache.get(code, [])
-        # 除权日判定：今日是否为其除权日(任一分红的除权日==今日)；是则前端显示 XD 前缀，过后自动恢复
-        ex_today = any(str(x.get("ex_date", "")) == TODAY.isoformat() for x in rows)
+        # 除权标记：今日若为其除权日，取该次分红的 XD/XR/DR 标记(空串=非除权日)；过后自动恢复正常名
+        ex_rows = [x for x in rows if str(x.get("ex_date", "")) == TODAY.isoformat()]
+        ex_tag = ex_rows[0].get("tag", "") if ex_rows else ""
         # TTM: 公告日(实施方案公告日期) ∈ [TTM_START, TODAY]
         ttm_rows = [x for x in rows
                     if TTM_START <= dt.date.fromisoformat(x["announce_date"]) <= TODAY]
         ttm_per10 = sum(x["per10"] for x in ttm_rows)
-        ttm_div_count = len(ttm_rows)          # TTM 窗口内分红次数(多次分红分别计数)
+        ttm_div_count = sum(1 for x in ttm_rows if x["per10"] > 0)   # TTM 窗口内现金分红次数(多次分别计数)
         # LFY: 最近财年(最大 fy) 全部分红(一年内多次分红已相加)
         fy_years = sorted({x["fy"] for x in rows}, reverse=True)
         lfy_year = fy_years[0] if fy_years else ""
         lfy_per10 = fy_sum(rows, lfy_year)
-        lfy_div_count = (sum(1 for x in rows if x["fy"] == lfy_year)
-                         if isinstance(lfy_year, int) else 0)  # 该财年分红次数
+        lfy_div_count = (sum(1 for x in rows if x["fy"] == lfy_year and x["per10"] > 0)
+                         if isinstance(lfy_year, int) else 0)  # 该财年现金分红次数
         # 前年 / 大前年(相对 LFY 财年, 计算口径同 LFY)
         prev_year = (lfy_year - 1) if isinstance(lfy_year, int) else ""
         prev2_year = (lfy_year - 2) if isinstance(lfy_year, int) else ""
@@ -276,7 +300,7 @@ def main():
         prev_yield = (prev_per10 / 10.0 / price * 100.0) if price > 0 else 0.0
         prev2_yield = (prev2_per10 / 10.0 / price * 100.0) if price > 0 else 0.0
         records.append({
-            "code": code, "name": name, "ex_today": ex_today,
+            "code": code, "name": name, "ex_tag": ex_tag,
             "price": round(price, 2), "total_mv_yi": round(mv, 2),
             "ttm_per10": round(ttm_per10, 4), "ttm_yield": round(ttm_yield, 3),
             "ttm_div_count": ttm_div_count,

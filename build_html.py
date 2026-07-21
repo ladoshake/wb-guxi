@@ -18,7 +18,7 @@ def rank_rows(rows, kind):
             "rank": i,
             "code": r["code"],
             "name": r["name"],
-            "ex_today": r.get("ex_today", False),
+            "ex_tag": r.get("ex_tag", ""),
             "price": r["price"],
             "total_mv_yi": r["total_mv_yi"],
             "dps": round((r.get(per10_key, 0) or 0) / 10.0, 3),  # 元/股
@@ -223,7 +223,7 @@ function renderTable(tableId, rows, withFy){
     const lfyCell = `<td class="yld">${fmt(r.yield,2)}%</td>`;
     const prev = withFy ? `<td class="yld2">${fmt(r.prev_yield,2)}%</td><td class="yld2">${fmt(r.prev2_yield,2)}%</td>` : "";
     tr.innerHTML = `<td><span class="rk">${r.rank}</span></td>
-      <td><b>${r.ex_today ? "XD" + r.name : r.name}</b></td>
+      <td><b>${r.ex_tag + r.name}</b></td>
       <td class="code">${r.code}</td>
       <td>${fmt(r.price)}</td>
       <td>${fmt(r.total_mv_yi,0)}</td>
