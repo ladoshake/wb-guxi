@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""读取 data.json，生成自包含的交互式网页 index.html（数据内嵌，可直接打开）。"""
+"""读取 data.json，生成自包含的交互式网页 index.html（数据内嵌，可直接打开）。
+数据结构(v3 A股专版)：
+{
+  generated_at, ttm_start,
+  tiers: [ {key,label,count,ttm_rank,lfy_rank} ]
+}
+"""
 import json
 
 WORKDIR = "/Users/green/WorkBuddy/2026-07-11-16-35-47"
@@ -9,26 +15,29 @@ OUT = f"{WORKDIR}/index.html"
 
 
 def rank_rows(rows, kind):
-    """kind: 'ttm' 或 'lfy'，明确取对应字段，避免记录中同时含两套字段时取错。"""
+    """kind: 'ttm' 或 'lfy'，明确取对应字段。"""
     per10_key = "ttm_per10" if kind == "ttm" else "lfy_per10"
     yield_key = "ttm_yield" if kind == "ttm" else "lfy_yield"
     out = []
     for i, r in enumerate(rows, 1):
+        raw_code = r["code"]
+        # 去掉市场前缀 (sh/sz)
+        if raw_code[:2].lower() in ("sh", "sz") and len(raw_code) > 2:
+            raw_code = raw_code[2:]
         row = {
             "rank": i,
-            "code": r["code"],
+            "code": raw_code,
             "name": r["name"],
             "ex_tag": r.get("ex_tag", ""),
             "price": r["price"],
             "total_mv_yi": r["total_mv_yi"],
-            "dps": round((r.get(per10_key, 0) or 0) / 10.0, 3),  # 元/股
+            "dps": round((r.get(per10_key, 0) or 0) / 10.0, 3),
             "yield": r[yield_key],
             "fy": r.get("lfy_year", "") if kind == "lfy" else "",
             "ttm_div_count": r.get("ttm_div_count", 0),
             "lfy_div_count": r.get("lfy_div_count", 0),
         }
         if kind == "lfy":
-            # 前年 / 大前年股息率(相对 LFY 财年, 口径同 LFY)
             row["prev_yield"] = round(r.get("prev_yield", 0) or 0, 3)
             row["prev2_yield"] = round(r.get("prev2_yield", 0) or 0, 3)
             row["prev_year"] = r.get("prev_year", "")
@@ -41,25 +50,23 @@ def build():
     with open(DATA, encoding="utf-8") as f:
         data = json.load(f)
 
-    tiers_html = []
+    tiers = []
+    years = []
     for t in data["tiers"]:
         ttm = rank_rows(t["ttm_rank"], "ttm")
         lfy = rank_rows(t["lfy_rank"], "lfy")
-        tiers_html.append({
-            "key": t["key"], "label": t["label"], "count": t["count"],
-            "ttm": ttm, "lfy": lfy,
-        })
-
-    # 表头年份：取全部档 LFY 榜「最近财年」的众数，表头直接显示具体年份
-    years = [int(r["fy"]) for tier in tiers_html for r in tier["lfy"] if r.get("fy")]
+        tiers.append({"key": t["key"], "label": t["label"], "count": t["count"],
+                      "ttm": ttm, "lfy": lfy})
+        years += [int(r["fy"]) for r in lfy if r.get("fy")]
     modal = max(set(years), key=years.count) if years else None
+
     prev_hdr = f"{modal - 1}年股息率" if modal is not None else "前年股息率"
     prev2_hdr = f"{modal - 2}年股息率" if modal is not None else "大前年股息率"
 
     payload = {
         "generated_at": data["generated_at"],
         "ttm_start": data["ttm_start"],
-        "tiers": tiers_html,
+        "tiers": tiers,
     }
 
     html = HTML_TEMPLATE
@@ -68,7 +75,7 @@ def build():
     html = html.replace("/*__PREV2_HDR__*/", prev2_hdr)
     with open(OUT, "w", encoding="utf-8") as f:
         f.write(html)
-    print(f"[html] 生成 {OUT}  档数={len(tiers_html)} TTM={len(tiers_html[0]['ttm'])} LFY={len(tiers_html[0]['lfy'])} | 表头: {prev_hdr} / {prev2_hdr}")
+    print(f"[html] 生成 {OUT}  分档数={len(tiers)}")
 
 
 HTML_TEMPLATE = r"""<!DOCTYPE html>
@@ -76,7 +83,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>A股股息率排名</title>
+<title>股息率排名</title>
 <style>
   :root{
     --bg:#f5f6f8; --card:#ffffff; --ink:#1f2430; --sub:#6b7280;
@@ -95,6 +102,9 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .box{display:flex;align-items:baseline;gap:6px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:6px 12px;white-space:nowrap}
   .num{font-size:13px;font-weight:700;color:var(--brand2)}
   .lab{font-size:13px;color:var(--sub)}
+  .capsel{display:flex;gap:8px;margin:14px 0 2px;flex-wrap:wrap}
+  .cap{padding:6px 16px;border:1px solid var(--line);border-radius:999px;background:var(--card);cursor:pointer;font-size:13px;font-weight:600;color:var(--sub);line-height:1.2;white-space:nowrap}
+  .cap.active{background:#d32f2f;color:#fff;border-color:#d32f2f}
   .tabs{display:flex;gap:8px;margin:14px 0 8px}
   .tab{padding:7px 20px;display:flex;flex-direction:column;align-items:center;gap:1px;border:1px solid var(--line);border-radius:999px;background:var(--card);cursor:pointer;font-size:14px;font-weight:600;color:var(--sub);line-height:1.2}
   .tab-main{white-space:nowrap}
@@ -102,9 +112,6 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .tab.active .tab-sub{opacity:.92}
   .tab.active{background:var(--brand2);color:#fff;border-color:var(--brand2)}
   .tab.alt.active{background:var(--brand2);border-color:var(--brand2)}
-  .capsel{display:flex;gap:8px;margin:14px 0 2px;flex-wrap:wrap}
-  .cap{padding:6px 16px;border:1px solid var(--line);border-radius:999px;background:var(--card);cursor:pointer;font-size:13px;font-weight:600;color:var(--sub);line-height:1.2;white-space:nowrap}
-  .cap.active{background:var(--brand);color:#fff;border-color:var(--brand)}
   .panel{display:none}
   .panel.active{display:block}
   table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;font-size:13.5px}
@@ -125,7 +132,6 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .note h3{margin:0 0 8px;font-size:clamp(14px,1.4vw,16px)}
   .note ul{margin:6px 0;padding-left:20px}
   .note li{margin:3px 0}
-  .tag{display:inline-block;background:#eef2ff;color:#4338ca;border-radius:6px;padding:1px 7px;font-size:11px;margin-left:6px}
   @media (max-width:560px){
     .subhead{flex-direction:column;align-items:flex-start;gap:8px}
     .metabox{flex-direction:column;align-items:flex-start;gap:8px}
@@ -139,9 +145,9 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 <body>
 <div class="wrap">
   <header>
-    <h1>A股股息率排名</h1>
+    <h1>股息率排名</h1>
     <div class="subhead">
-      <p class="desc" id="desc">市值 &gt; 1000亿 · 股息率 Top 30</p>
+      <p class="desc" id="desc">市值 &gt; 1000亿元 · 股息率 Top 30</p>
       <div class="metabox">
         <div class="meta">数据日期：<span id="gen"></span> ｜ TTM计算起点：<span id="ttmstart"></span></div>
         <div class="box"><div class="lab" id="cntlab">市值&gt;1000亿公司数</div><div class="num" id="cnt"></div></div>
@@ -149,10 +155,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     </div>
   </header>
 
-  <div class="capsel" id="capsel">
-    <div class="cap active" data-cap="gt1000">市值 &gt; 1000亿</div>
-    <div class="cap" data-cap="mid500">1000亿 ≥ 市值 &gt; 500亿</div>
-  </div>
+  <div class="capsel" id="capsel"></div>
 
   <div class="tabs">
     <div class="tab active" data-tab="ttm"><span class="tab-main">TTM 股息率</span><span class="tab-sub">最近12个月</span></div>
@@ -164,7 +167,7 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     <table id="table-ttm">
       <thead><tr>
         <th data-k="rank">排名</th><th data-k="name">名称</th><th data-k="code">代码</th>
-        <th data-k="price">现价(元)</th><th data-k="total_mv_yi">总市值(亿)</th>
+        <th data-k="price">现价(¥)</th><th data-k="total_mv_yi">总市值(亿)</th>
         <th data-k="dps">每股分红(元/股)</th><th data-k="div_count">分红次数</th><th data-k="yield">TTM股息率</th>
       </tr></thead>
       <tbody></tbody>
@@ -177,8 +180,8 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
     <table id="table-lfy">
       <thead><tr>
         <th data-k="rank">排名</th><th data-k="name">名称</th><th data-k="code">代码</th>
-        <th data-k="price">现价(元)</th><th data-k="total_mv_yi">总市值(亿)</th>
-        <th data-k="dps">每股分红(元/股)</th><th data-k="div_count">分红次数</th><th data-k="yield">LFY股息率</th><th data-k="prev_yield">/*__PREV_HDR__*/</th><th data-k="prev2_yield">/*__PREV2_HDR__*/</th>
+        <th data-k="price">现价(¥)</th><th data-k="total_mv_yi">总市值(亿)</th>
+        <th data-k="dps">每股分红(元/股)</th><th data-k="div_count">分红次数</th><th data-k="yield">LFY股息率</th><th data-k="prev_yield" id="prevHdr">/*__PREV_HDR__*/</th><th data-k="prev2_yield" id="prev2Hdr">/*__PREV2_HDR__*/</th>
       </tr></thead>
       <tbody></tbody>
     </table>
@@ -188,12 +191,12 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   <div class="note">
     <h3>计算口径说明</h3>
     <ul>
-      <li><b>市值筛选</b>：提供两档——市值 &gt; 1000 亿元、1000 亿元 ≥ 市值 &gt; 500 亿元，分别取各档内股息率 Top 30。</li>
-      <li><b>股息率</b>：现金分红合计 ÷ 当前总市值 × 100%。</li>
-      <li><b>TTM</b>：实施方案公告日在近 12 个月内的现金分红之和。</li>
-      <li><b>LFY</b>：最近一个完整财年的现金分红之和（一年内多次分红全部相加）。按分红所属报告期（财年）统计——年度分红虽常在次年才公告/实施，仍计入其所属财年，不计入实施当年。</li>
+      <li><b>市场</b>：A股，按总市值分两档（&gt;1000亿元、500~1000亿元）。</li>
+      <li><b>股息率</b>：现金分红合计 ÷ 当前价 × 100%（同一财年/12个月内多次分红全部相加）。</li>
+      <li><b>TTM</b>：以「实施方案公告日」落入近 12 个月窗口的现金分红之和。</li>
+      <li><b>LFY</b>：最近一个完整财年的现金分红之和，按分红所属报告期（财年）统计。年度分红虽常在次年才实施/公告，仍计入其所属财年。</li>
       <li><b>历史列（LFY 表）</b>：LFY 财年前一年、前两年的股息率，口径同 LFY，表头标注具体年份。</li>
-      <li><b>数据来源</b>：市值来自腾讯财经实时行情，分红明细来自巨潮历史分红。榜单为计算快照，非投资建议。</li>
+      <li><b>数据来源</b>：腾讯自选股（WeStock）。快照数据，非投资建议。</li>
     </ul>
   </div>
 
@@ -202,43 +205,44 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
 <script>
 const EMBEDDED = /*__DATA__*/;
 let DATA = EMBEDDED;
-let currentCap = DATA.tiers[0].key;   // 当前市值档
-let currentTab = "ttm";               // 当前股息率口径
+let curCap = DATA.tiers[0].key;
+let curTab = "ttm";
 
 const fmt = (n,d=2)=> (n==null||isNaN(n))?"-":Number(n).toLocaleString("zh-CN",{minimumFractionDigits:d,maximumFractionDigits:d});
 
-// 排序状态：按「档_口径」分别维护，切换时保留各自排序
 const sortState = {};
 const sortKey = (cap,kind)=> cap+"_"+kind;
-
+const TIER = ()=> DATA.tiers.find(t=>t.key===curCap);
+const rowsFor = (kind)=> (kind==="ttm"?TIER().ttm:TIER().lfy).slice();
 function divCountOf(r, withFy){ return withFy ? r.lfy_div_count : r.ttm_div_count; }
-function getTier(key){ return DATA.tiers.find(t=>t.key===key); }
-function rowsFor(cap, kind){ const t=getTier(cap); return (kind==="ttm"?t.ttm:t.lfy).slice(); }
 
 function renderTable(tableId, rows, withFy){
   const tbody = document.querySelector(`#${tableId} tbody`);
   tbody.innerHTML = "";
   rows.forEach(r=>{
     const tr = document.createElement("tr");
-    const lfyCell = `<td class="yld">${fmt(r.yield,2)}%</td>`;
-    const prev = withFy ? `<td class="yld2">${fmt(r.prev_yield,2)}%</td><td class="yld2">${fmt(r.prev2_yield,2)}%</td>` : "";
+    const fullName = (r.ex_tag||"") + (r.name||"");
     tr.innerHTML = `<td><span class="rk">${r.rank}</span></td>
-      <td><b>${r.ex_tag + r.name}</b></td>
+      <td><b title="${fullName.replace(/"/g,'&quot;')}">${fullName}</b></td>
       <td class="code">${r.code}</td>
       <td>${fmt(r.price)}</td>
       <td>${fmt(r.total_mv_yi,0)}</td>
       <td>${fmt(r.dps,3)}</td>
       <td class="cnt">${divCountOf(r, withFy)}</td>
-      ${lfyCell}${prev}`;
+      ${withFy
+        ? `<td class="yld">${fmt(r.yield,2)}%</td>
+           <td class="yld2">${fmt(r.prev_yield,2)}%</td>
+           <td class="yld2">${fmt(r.prev2_yield,2)}%</td>`
+        : `<td class="yld">${fmt(r.yield,2)}%</td>`}`;
     tbody.appendChild(tr);
   });
 }
 
 function applyTable(tableId, withFy){
   const kind = withFy ? "lfy" : "ttm";
-  const skey = sortKey(currentCap, kind);
+  const skey = sortKey(curCap, kind);
   const sk = sortState[skey] || (sortState[skey] = {key:"yield", dir:-1});
-  const rows = rowsFor(currentCap, kind);
+  const rows = rowsFor(kind);
   rows.sort((a,b)=>{
     let va = sk.key==="div_count" ? divCountOf(a, withFy) : a[sk.key];
     let vb = sk.key==="div_count" ? divCountOf(b, withFy) : b[sk.key];
@@ -246,7 +250,6 @@ function applyTable(tableId, withFy){
     return sk.dir*(va-vb);
   });
   renderTable(tableId, rows, withFy);
-  // 同步表头排序箭头
   const table = document.getElementById(tableId);
   table.querySelectorAll("th").forEach(x=>{
     x.classList.remove("sort-asc","sort-desc");
@@ -257,11 +260,28 @@ function applyTable(tableId, withFy){
 function renderAll(){
   applyTable("table-ttm", false);
   applyTable("table-lfy", true);
-  // 副标题与「公司数」随当前档更新
-  const t = getTier(currentCap);
+  const t = TIER();
   document.getElementById("desc").textContent = t.label + " · 股息率 Top 30";
   document.getElementById("cntlab").textContent = t.label.replace(/\s/g,"") + "公司数";
   document.getElementById("cnt").textContent = t.count;
+}
+
+function buildCaps(){
+  const sel = document.getElementById("capsel");
+  sel.innerHTML = "";
+  DATA.tiers.forEach(t=>{
+    const d = document.createElement("div");
+    d.className = "cap" + (t.key===curCap ? " active" : "");
+    d.dataset.cap = t.key;
+    d.textContent = t.label;
+    d.addEventListener("click", ()=>{
+      curCap = t.key;
+      document.querySelectorAll(".cap").forEach(x=>x.classList.remove("active"));
+      d.classList.add("active");
+      renderAll();
+    });
+    sel.appendChild(d);
+  });
 }
 
 function bindTable(tableId, withFy){
@@ -270,7 +290,7 @@ function bindTable(tableId, withFy){
     th.addEventListener("click",()=>{
       const kind = withFy ? "lfy" : "ttm";
       const kp = th.dataset.k;
-      const skey = sortKey(currentCap, kind);
+      const skey = sortKey(curCap, kind);
       const sk = sortState[skey] || (sortState[skey] = {key:"yield", dir:-1});
       if(sk.key===kp){ sk.dir *= -1; }
       else { sk.key=kp; sk.dir = (kp==="rank"||kp==="name"||kp==="code")?1:-1; }
@@ -283,22 +303,13 @@ function initData(d){
   DATA = d;
   document.getElementById("gen").textContent = DATA.generated_at;
   document.getElementById("ttmstart").textContent = DATA.ttm_start;
+  buildCaps();
   renderAll();
 }
 
 // 一次性绑定表头排序
 bindTable("table-ttm", false);
 bindTable("table-lfy", true);
-
-// 市值档切换
-document.querySelectorAll(".cap").forEach(c=>{
-  c.addEventListener("click",()=>{
-    document.querySelectorAll(".cap").forEach(x=>x.classList.remove("active"));
-    c.classList.add("active");
-    currentCap = c.dataset.cap;
-    renderAll();
-  });
-});
 
 // TTM / LFY 口径切换
 document.querySelectorAll(".tab").forEach(t=>{
@@ -307,8 +318,8 @@ document.querySelectorAll(".tab").forEach(t=>{
     document.querySelectorAll(".panel").forEach(x=>x.classList.remove("active"));
     t.classList.add("active");
     document.getElementById("panel-"+t.dataset.tab).classList.add("active");
-    currentTab = t.dataset.tab;
-    renderAll();   // 重新渲染并同步表头排序箭头
+    curTab = t.dataset.tab;
+    renderAll();
   });
 });
 

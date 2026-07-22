@@ -13,3 +13,6 @@ __pycache__/
 
 # GitHub 推送凭证（仅本地，绝不可入库）
 .github_token
+
+# 日志文件
+*.log
