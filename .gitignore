@@ -16,3 +16,7 @@ __pycache__/
 
 # 日志文件
 *.log
+
+# 多市场版本遗留文件（当前仅A股，不需要入库）
+build_us_universe.py
+us_universe.txt
