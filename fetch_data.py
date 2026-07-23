@@ -25,6 +25,10 @@ TIERS = [
     ("gt1000", 1000.0, lambda mv: mv > 1000.0),
     ("mid500", 500.0, lambda mv: 500.0 < mv <= 1000.0),
 ]
+TIER_LABELS = {
+    "gt1000": "市值 > 1000亿元",
+    "mid500": "1000亿元 ≥ 市值 > 500亿元",
+}
 
 # 股息率合理性护栏
 MAX_YIELD = 30.0
@@ -185,7 +189,7 @@ def build():
             continue
         if price <= 0 or mv_raw <= 0:
             continue
-        mv_yi = mv_raw                                 # total_market_cap 已是亿元
+        mv_yi = mv_raw / 1e8                            # total_market_cap 返回原始元值，转为亿元
         rows = _div_to_rows(divs_map.get(code, []))
         rec = finalize_one(code, name_map.get(code, code), price, mv_yi, rows)
         raw.append(rec)
@@ -235,10 +239,7 @@ def make_market(records):
         sub = [r for r in records if pred(r["total_mv_yi"])]
         ttm_rank = sorted([r for r in sub if r["ttm_yield"] > 0], key=lambda x: x["ttm_yield"], reverse=True)[:30]
         lfy_rank = sorted([r for r in sub if r["lfy_yield"] > 0], key=lambda x: x["lfy_yield"], reverse=True)[:30]
-        if key == "gt1000":
-            label = f"市值 > {thresh:.0f}亿元"
-        else:
-            label = f"{thresh:.0f}亿元 ≥ 市值 > 500亿元"
+        label = TIER_LABELS.get(key, f"tier_{key}")
         tiers_out.append({"key": key, "label": label, "count": len(sub),
                           "ttm_rank": ttm_rank, "lfy_rank": lfy_rank})
     return tiers_out
