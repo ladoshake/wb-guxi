@@ -6,8 +6,8 @@ A股 股息率排名（按市值分档）—— 数据抓取与计算
   - 股票池筛选(按市值过滤): westock-tool 的 filter
   - 实时行情(现价/总市值/TTM 股息率): westock-data 的 quote
   - 历史分红(算 LFY 口径): westock-data 的 dividend list (--years 5)
-流程：池(filter, 总市值>500亿元) -> 行情(quote) -> 分红(dividend list) -> finalize_one 算 LFY。
-TTM 股息率统一取行情接口的 dividend_ratio_ttm。
+流程：池(filter, 总市值>500亿元) -> 行情(quote) -> 分红(dividend list) -> finalize_one 算 TTM/LFY。
+TTM 股息率完全由本地分红记录计算（每股分红合计 ÷ 现价 × 100%），与每股分红/分红次数同源一致。
 市值分档: 总市值分两档 >1000亿 / 500~1000亿（各档内按股息率 Top30）。
 输出: data.json (供前端网页使用)。
 """
@@ -188,13 +188,6 @@ def build():
         mv_yi = mv_raw                                 # total_market_cap 已是亿元
         rows = _div_to_rows(divs_map.get(code, []))
         rec = finalize_one(code, name_map.get(code, code), price, mv_yi, rows)
-        # TTM 股息率以行情接口为准(dividend_ratio_ttm)
-        try:
-            ttm = float(q.get("dividend_ratio_ttm") or 0)
-        except Exception:
-            ttm = 0.0
-        if ttm > 0:
-            rec["ttm_yield"] = round(ttm, 3)
         raw.append(rec)
         done += 1
         if done % 30 == 0:
