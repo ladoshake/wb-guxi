@@ -189,7 +189,9 @@ def build():
             continue
         if price <= 0 or mv_raw <= 0:
             continue
-        mv_yi = mv_raw / 1e8                            # total_market_cap 返回原始元值，转为亿元
+        # total_market_cap 单位在不同版本接口中不一致：早期返回原始元值(如 1.6e12)，
+        # 现版本直接返回亿元(如 16119.8)。以 1e8 为界自动归一：>1e8 视为原始元值，否则已为亿元。
+        mv_yi = mv_raw / 1e8 if mv_raw > 1e8 else mv_raw
         rows = _div_to_rows(divs_map.get(code, []))
         rec = finalize_one(code, name_map.get(code, code), price, mv_yi, rows)
         raw.append(rec)
