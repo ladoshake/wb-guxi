@@ -3,10 +3,10 @@
 """
 A股 股息率排名（按市值分档）—— 数据抓取与计算
 全部数据均通过 WorkBuddy 内置的【腾讯自选股(WeStock)】技能取数（与腾讯自选股 App / qt.gtimg.cn 同源）：
-  - 股票池筛选(按市值过滤): westock-tool 的 filter
-  - 实时行情(现价/总市值/TTM 股息率): westock-data 的 quote
-  - 历史分红(算 LFY 口径): westock-data 的 dividend list (--years 5)
-流程：池(filter, 总市值>500亿元) -> 行情(quote) -> 分红(dividend list) -> finalize_one 算 TTM/LFY。
+  - 股票池筛选(含市值/现价): westock-tool 的 filter（TotalMV 亿元 + ClosePrice 现价，同源可靠）
+  - 历史分红(算 TTM/LFY 口径): westock-data 的 dividend list (--years 5)
+流程：池(filter, 总市值>500亿元) -> 分红(dividend list) -> finalize_one 算 TTM/LFY。
+市值和现价直接取自 filter（无需另调 quote API），消除行情查询失败导致丢股票的问题。
 TTM 股息率完全由本地分红记录计算（每股分红合计 ÷ 现价 × 100%），与每股分红/分红次数同源一致。
 市值分档: 总市值分两档 >1000亿 / 500~1000亿（各档内按股息率 Top30）。
 输出: data.json (供前端网页使用)。
@@ -75,8 +75,8 @@ def run_westock(script, *args, retries=2):
 
 
 def westock_pool():
-    """市值>500亿元 的 [code, name] 列表（A股是腾讯自选股默认市场，不加 --market）。
-    code 形如 sh600519(沪) / sz000651(深)。"""
+    """市值>500亿元 的股票列表，含 filter 直接返回的 TotalMV(亿元) 和 ClosePrice(现价)。
+    filter 与 quote 同源(腾讯自选股)，TotalMV 已是亿元、ClosePrice 即现价，无需再调 quote API。"""
     data = run_westock(WESTOCK_TOOL, "filter",
                        f"intersect([TotalMV > {WESTOCK_MV_FLOOR}])", "--limit", "5000")
     if not isinstance(data, list):
@@ -85,13 +85,34 @@ def westock_pool():
     for x in data:
         code = (x.get("code") or "").strip()
         name = (x.get("name") or "").strip()
-        if code:
-            out.append((code, name))
+        if not code:
+            continue
+        try:
+            mv = float(x.get("TotalMV") or 0)
+        except Exception:
+            mv = 0.0
+        try:
+            price = float(x.get("ClosePrice") or 0)
+        except Exception:
+            price = 0.0
+        out.append((code, name, mv, price))
     return out
 
 
+def _parse_quote_item(it):
+    """从批量/单只行情响应项中提取 (code, quote_dict)。"""
+    if not isinstance(it, dict):
+        return None, None
+    q = it.get("data", it)
+    if not isinstance(q, dict):
+        return None, None
+    code = q.get("code") or q.get("symbol") or it.get("symbol") or it.get("code")
+    return (code, q) if code else (None, None)
+
+
 def westock_quotes(codes):
-    """批量行情：返回 {code: quote_dict}。A股响应结构为 {symbol, data:{}}。"""
+    """批量行情：返回 {code: quote_dict}。A股响应结构为 {success, data:[{symbol, data:{}}]}。
+    批量查完后对缺失 code 逐只补查，防止整块超时丢股票。"""
     result = {}
     for i in range(0, len(codes), 50):
         chunk = codes[i:i + 50]
@@ -102,15 +123,28 @@ def westock_quotes(codes):
         if not isinstance(items, list):
             continue
         for it in items:
-            if not isinstance(it, dict):
-                continue
-            q = it.get("data", it)
-            if not isinstance(q, dict):
-                continue
-            code = q.get("code") or q.get("symbol") or it.get("symbol") or it.get("code")
+            code, q = _parse_quote_item(it)
             if code:
                 result[code] = q
         time.sleep(0.2)
+    # 回补：对批量缺失的 code 逐只查询
+    missing = [c for c in codes if c not in result]
+    if missing:
+        print(f"     [quote] 批量缺失 {len(missing)} 只，逐只补查...")
+        for c in missing:
+            data = run_westock(WESTOCK_DATA, "quote", c)
+            if not data:
+                print(f"       [quote] {c} 补查失败")
+                continue
+            if isinstance(data, list) and data:
+                code, q = _parse_quote_item(data[0])
+            elif isinstance(data, dict):
+                code, q = _parse_quote_item(data)
+            else:
+                continue
+            if code:
+                result[code] = q
+            time.sleep(0.1)
     return result
 
 
@@ -172,32 +206,27 @@ def _div_to_rows(divs):
 def build():
     print("[A股] 市值筛选股票池(westock-tool filter, 总市值>500亿元) ...")
     pool = westock_pool()
-    codes = [c for c, _ in pool]
-    name_map = {c: n for c, n in pool}
+    codes = [c for c, _, _, _ in pool]
+    name_map = {c: n for c, n, _, _ in pool}
+    mv_map = {c: mv for c, _, mv, _ in pool}      # TotalMV (亿元)
+    price_map = {c: p for c, _, _, p in pool}      # ClosePrice (现价)
     print(f"     A股候选(>500亿元): {len(codes)}")
-    quotes = westock_quotes(codes)
     divs_map = westock_dividends(codes)
-    raw, done = [], 0
+    raw, done, skipped = [], 0, 0
     for code in codes:
-        q = quotes.get(code)
-        if not q:
+        price = price_map.get(code, 0)
+        mv_yi = mv_map.get(code, 0)
+        if price <= 0 or mv_yi <= 0:
+            print(f"     [skip] {code} {name_map.get(code,'')} — price={price} mv={mv_yi}")
+            skipped += 1
             continue
-        try:
-            price = float(q.get("price") or 0)
-            mv_raw = float(q.get("total_market_cap") or 0)  # 元 raw
-        except Exception:
-            continue
-        if price <= 0 or mv_raw <= 0:
-            continue
-        # total_market_cap 单位在不同版本接口中不一致：早期返回原始元值(如 1.6e12)，
-        # 现版本直接返回亿元(如 16119.8)。以 1e8 为界自动归一：>1e8 视为原始元值，否则已为亿元。
-        mv_yi = mv_raw / 1e8 if mv_raw > 1e8 else mv_raw
         rows = _div_to_rows(divs_map.get(code, []))
         rec = finalize_one(code, name_map.get(code, code), price, mv_yi, rows)
         raw.append(rec)
         done += 1
         if done % 30 == 0:
             print(f"     [A] 已处理 {done}/{len(codes)}")
+    print(f"     [A] 完成: {done} 只入库, {skipped} 只跳过")
     return raw
 
 
