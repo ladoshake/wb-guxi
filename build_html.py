@@ -114,8 +114,8 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .tab.alt.active{background:var(--brand2);border-color:var(--brand2)}
   .panel{display:none}
   .panel.active{display:block}
-  table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;font-size:13.5px}
-  .table-wrap{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch}
+  table{width:100%;border-collapse:separate;border-spacing:0;background:var(--card);font-size:13.5px}
+  .table-wrap{width:100%;overflow-x:auto;-webkit-overflow-scrolling:touch;border:1px solid var(--line);border-radius:10px}
   th,td{padding:9px 10px;text-align:left;border-bottom:1px solid var(--line);white-space:nowrap}
   th{background:#f0f1f4;color:#374151;font-weight:600;cursor:pointer;user-select:none;position:relative}
   th.sort-asc::after{content:" ▲";font-size:10px;color:var(--brand)}
@@ -132,6 +132,19 @@ HTML_TEMPLATE = r"""<!DOCTYPE html>
   .note h3{margin:0 0 8px;font-size:clamp(14px,1.4vw,16px)}
   .note ul{margin:6px 0;padding-left:20px}
   .note li{margin:3px 0}
+  /* ---- 冻结前两列（排名 + 名称）---- */
+  th:first-child, td:first-child { position:sticky; left:0; z-index:3; min-width:46px; }
+  th:nth-child(2), td:nth-child(2) { position:sticky; left:46px; z-index:3; min-width:88px; }
+  th:first-child, th:nth-child(2) { background:#f0f1f4; }
+  td:first-child, td:nth-child(2) { background:var(--card); }
+  tbody tr:nth-child(even) td:first-child,
+  tbody tr:nth-child(even) td:nth-child(2) { background:#f7f8fa; }
+  tbody tr:hover td:first-child,
+  tbody tr:hover td:nth-child(2) { background:#e8f0fe; }
+  td:nth-child(2):after {
+    content:""; position:absolute; top:0; right:0; bottom:-1px;
+    width:1px; background:var(--line);
+  }
   @media (max-width:560px){
     .subhead{flex-direction:column;align-items:flex-start;gap:8px}
     .metabox{flex-direction:column;align-items:flex-start;gap:8px}
