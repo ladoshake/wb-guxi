@@ -91,6 +91,10 @@ def westock_pool():
             mv = float(x.get("TotalMV") or 0)
         except Exception:
             mv = 0.0
+        # TotalMV 单位归一：腾讯接口有时返回『元』原始值(>1e8)，有时返回『亿元』；
+        # 以 1e8 为阈值稳健归一为亿元（与 07-27 quote 接口修复同思路）。
+        if mv > 1e8:
+            mv = mv / 1e8
         try:
             price = float(x.get("ClosePrice") or 0)
         except Exception:
