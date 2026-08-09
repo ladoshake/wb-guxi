@@ -14,6 +14,7 @@ TTM 股息率完全由本地分红记录计算（每股分红合计 ÷ 现价 ×
 import json
 import os
 import time
+import signal
 import datetime as dt
 import subprocess
 
@@ -53,11 +54,17 @@ WESTOCK_MV_FLOOR = 50000000000
 
 
 def run_westock(script, *args, retries=2):
-    """调用 WeStock 技能脚本(node)，返回解析后的 JSON（--raw）。失败/超时速重试。"""
+    """调用 WeStock 技能脚本(node)，返回解析后的 JSON（--raw）。失败/超时速重试。
+
+    健壮性修复：WeStock 的 node CLI 会派生子进程；subprocess.run 的 timeout 只杀父
+    进程，孙进程仍持有 stdout 管道导致 communicate() 永不返回而整体死锁。故用
+    start_new_session=True 起独立进程组，超时时 os.killpg 杀整组，确保管道关闭、调用返回。
+    """
     cmd = [WESTOCK_NODE, script, *args, "--raw"]
     for attempt in range(retries + 1):
         try:
-            p = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+            p = subprocess.run(cmd, capture_output=True, text=True, timeout=120,
+                               start_new_session=True)
             out = (p.stdout or "").strip()
             if not out:
                 if attempt < retries:
@@ -65,6 +72,17 @@ def run_westock(script, *args, retries=2):
                     continue
                 return None
             return json.loads(out)
+        except subprocess.TimeoutExpired:
+            # 杀掉整组进程（含 node 派生的孙进程），关闭管道
+            try:
+                os.killpg(os.getpgid(p.pid), signal.SIGKILL)
+            except Exception:
+                pass
+            if attempt < retries:
+                time.sleep(1.0)
+                continue
+            print(f"  [westock] {script} {args[:2]} 超时(120s×{retries+1}次)")
+            return None
         except Exception as e:
             if attempt < retries:
                 time.sleep(1.0)
