@@ -1214,7 +1214,7 @@
     {
       "key": "mid500",
       "label": "1000亿元 ≥ 市值 > 500亿元",
-      "count": 220,
+      "count": 221,
       "ttm_rank": [
         {
           "code": "sz002027",
@@ -1310,8 +1310,8 @@
           "lfy_yield": 6.518,
           "lfy_div_count": 2,
           "prev_year": 2024,
-          "prev_per10": 8.1,
-          "prev_yield": 4.631,
+          "prev_per10": 2.2,
+          "prev_yield": 1.258,
           "prev2_year": 2023,
           "prev2_per10": 6.6,
           "prev2_yield": 3.774
@@ -1912,8 +1912,8 @@
           "lfy_yield": 6.518,
           "lfy_div_count": 2,
           "prev_year": 2024,
-          "prev_per10": 8.1,
-          "prev_yield": 4.631,
+          "prev_per10": 2.2,
+          "prev_yield": 1.258,
           "prev2_year": 2023,
           "prev2_per10": 6.6,
           "prev2_yield": 3.774
