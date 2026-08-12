@@ -2,21 +2,23 @@
 # -*- coding: utf-8 -*-
 """
 A股 股息率排名（按市值分档）—— 数据抓取与计算
-全部数据均通过 WorkBuddy 内置的【腾讯自选股(WeStock)】技能取数（与腾讯自选股 App / qt.gtimg.cn 同源）：
-  - 股票池筛选(含市值/现价): westock-tool 的 filter（TotalMV 亿元 + ClosePrice 现价，同源可靠）
-  - 历史分红(算 TTM/LFY 口径): westock-data 的 dividend list (--years 5)
-流程：池(filter, 总市值>500亿元) -> 分红(dividend list) -> finalize_one 算 TTM/LFY。
-市值和现价直接取自 filter（无需另调 quote API），消除行情查询失败导致丢股票的问题。
-TTM 股息率完全由本地分红记录计算（每股分红合计 ÷ 现价 × 100%），与每股分红/分红次数同源一致。
+市值/现价来自腾讯 gtimg（与腾讯自选股 / WeStock 同源），历史分红来自巨潮资讯(cninfo)。
+流程：A股代码列表(akshare) -> 批量行情(gtimg, 总市值>500亿元) -> 历史分红(cninfo) -> 算 TTM/LFY。
+TTM 股息率完全由本地分红记录计算（每股分红合计 ÷ 现价 × 100%）。
 市值分档: 总市值分两档 >1000亿 / 500~1000亿（各档内按股息率 Top30）。
 输出: data.json (供前端网页使用)。
 """
 import json
 import os
+import re
 import time
 import signal
 import datetime as dt
 import subprocess
+import requests
+import akshare as ak
+
+os.environ.setdefault("TQDM_DISABLE", "1")
 
 WORKDIR = "/Users/green/WorkBuddy/2026-07-11-16-35-47"
 OUT = f"{WORKDIR}/data.json"
@@ -43,23 +45,19 @@ def _safe_yield(per10, price):
     return y if y <= MAX_YIELD else 0.0
 
 
-# ------------------------- 腾讯自选股 WeStock 技能 -------------------------
+# ------------------------- 腾讯自选股 WeStock 技能（旧版内置 CLI） -------------------------
 WESTOCK_DIR = "/Applications/WorkBuddy.app/Contents/Resources/app.asar.unpacked/resources/builtin-skills"
 WESTOCK_TOOL = os.path.join(WESTOCK_DIR, "westock-tool", "scripts", "index.js")
 WESTOCK_DATA = os.path.join(WESTOCK_DIR, "westock-data", "scripts", "index.js")
 WESTOCK_NODE = "/Users/green/.workbuddy/binaries/node/versions/22.22.2/bin/node"
+USE_BUILTIN = os.path.isdir(WESTOCK_DIR) and os.path.isfile(WESTOCK_TOOL) and os.path.isfile(WESTOCK_DATA)
 
 # 市值筛选阈值：>500亿元（raw 元 = 5e10）
 WESTOCK_MV_FLOOR = 50000000000
 
 
 def run_westock(script, *args, retries=2):
-    """调用 WeStock 技能脚本(node)，返回解析后的 JSON（--raw）。失败/超时速重试。
-
-    健壮性修复：WeStock 的 node CLI 会派生子进程；subprocess.run 的 timeout 只杀父
-    进程，孙进程仍持有 stdout 管道导致 communicate() 永不返回而整体死锁。故用
-    start_new_session=True 起独立进程组，超时时 os.killpg 杀整组，确保管道关闭、调用返回。
-    """
+    """调用 WeStock 技能脚本(node)，返回解析后的 JSON（--raw）。失败/超时速重试。"""
     cmd = [WESTOCK_NODE, script, *args, "--raw"]
     for attempt in range(retries + 1):
         try:
@@ -73,7 +71,6 @@ def run_westock(script, *args, retries=2):
                 return None
             return json.loads(out)
         except subprocess.TimeoutExpired:
-            # 杀掉整组进程（含 node 派生的孙进程），关闭管道
             try:
                 os.killpg(os.getpgid(p.pid), signal.SIGKILL)
             except Exception:
@@ -93,8 +90,7 @@ def run_westock(script, *args, retries=2):
 
 
 def westock_pool():
-    """市值>500亿元 的股票列表，含 filter 直接返回的 TotalMV(亿元) 和 ClosePrice(现价)。
-    filter 与 quote 同源(腾讯自选股)，TotalMV 已是亿元、ClosePrice 即现价，无需再调 quote API。"""
+    """市值>500亿元 的股票列表，含 filter 直接返回的 TotalMV(亿元) 和 ClosePrice(现价)。"""
     data = run_westock(WESTOCK_TOOL, "filter",
                        f"intersect([TotalMV > {WESTOCK_MV_FLOOR}])", "--limit", "5000")
     if not isinstance(data, list):
@@ -110,7 +106,7 @@ def westock_pool():
         except Exception:
             mv = 0.0
         # TotalMV 单位归一：腾讯接口有时返回『元』原始值(>1e8)，有时返回『亿元』；
-        # 以 1e8 为阈值稳健归一为亿元（与 07-27 quote 接口修复同思路）。
+        # 以 1e8 为阈值稳健归一为亿元。
         if mv > 1e8:
             mv = mv / 1e8
         try:
@@ -119,55 +115,6 @@ def westock_pool():
             price = 0.0
         out.append((code, name, mv, price))
     return out
-
-
-def _parse_quote_item(it):
-    """从批量/单只行情响应项中提取 (code, quote_dict)。"""
-    if not isinstance(it, dict):
-        return None, None
-    q = it.get("data", it)
-    if not isinstance(q, dict):
-        return None, None
-    code = q.get("code") or q.get("symbol") or it.get("symbol") or it.get("code")
-    return (code, q) if code else (None, None)
-
-
-def westock_quotes(codes):
-    """批量行情：返回 {code: quote_dict}。A股响应结构为 {success, data:[{symbol, data:{}}]}。
-    批量查完后对缺失 code 逐只补查，防止整块超时丢股票。"""
-    result = {}
-    for i in range(0, len(codes), 50):
-        chunk = codes[i:i + 50]
-        data = run_westock(WESTOCK_DATA, "quote", ",".join(chunk))
-        if not data:
-            continue
-        items = data.get("data", data) if isinstance(data, dict) else data
-        if not isinstance(items, list):
-            continue
-        for it in items:
-            code, q = _parse_quote_item(it)
-            if code:
-                result[code] = q
-        time.sleep(0.2)
-    # 回补：对批量缺失的 code 逐只查询
-    missing = [c for c in codes if c not in result]
-    if missing:
-        print(f"     [quote] 批量缺失 {len(missing)} 只，逐只补查...")
-        for c in missing:
-            data = run_westock(WESTOCK_DATA, "quote", c)
-            if not data:
-                print(f"       [quote] {c} 补查失败")
-                continue
-            if isinstance(data, list) and data:
-                code, q = _parse_quote_item(data[0])
-            elif isinstance(data, dict):
-                code, q = _parse_quote_item(data)
-            else:
-                continue
-            if code:
-                result[code] = q
-            time.sleep(0.1)
-    return result
 
 
 def _extract_divs(data):
@@ -185,9 +132,7 @@ def _extract_divs(data):
 
 
 def westock_dividends(codes):
-    """逐只分红(--years 5)：返回 {code: [record,...]}。
-    注意：批量 dividend list 的 sections 顺序与请求代码顺序不保证一致，且每条记录内无 code 字段，
-    无法自识别归属；故必须逐只查询才能保证分红正确归到对应股票（单只返回扁平列表，可靠）。"""
+    """逐只分红(--years 5)：返回 {code: [record,...]}。"""
     result = {}
     for i, c in enumerate(codes):
         d = run_westock(WESTOCK_DATA, "dividend", "list", c, "--years", "5")
@@ -198,20 +143,96 @@ def westock_dividends(codes):
     return result
 
 
-def _to_iso(s):
-    """YYYYMMDD -> YYYY-MM-DD；已是 ISO 或空则原样返回。"""
+# ------------------------- 新版 Fallback：akshare + 腾讯 gtimg + 巨潮 cninfo -------------------------
+def _a_prefix(code):
+    """A股数字代码 -> 腾讯行情前缀。"""
+    if code.startswith("6"):
+        return "sh"
+    if code.startswith(("0", "3")):
+        return "sz"
+    return "bj"
+
+
+def akshare_pool():
+    """通过 akshare 取 A股代码列表，再批量从腾讯 gtimg 取行情/总市值，返回 (>500亿, 现价>0) 的列表。"""
+    df = ak.stock_info_a_code_name()
+    codes = [str(c).strip() for c in df["code"].tolist()]
+    out = []
+    sess = requests.Session()
+    batch = 600
+    for i in range(0, len(codes), batch):
+        chunk = codes[i:i + batch]
+        gcodes = ",".join(f"{_a_prefix(c)}{c}" for c in chunk)
+        url = f"http://qt.gtimg.cn/q={gcodes}"
+        try:
+            r = sess.get(url, timeout=60)
+            r.encoding = "gbk"
+            text = r.text
+        except Exception as e:
+            print(f"  [gtimg] 请求失败 batch {i}: {e}")
+            continue
+        for m in re.finditer(r'v_(\w+)="([^"]*)"', text):
+            key = m.group(1)
+            fields = m.group(2).split("~")
+            if len(fields) < 46:
+                continue
+            try:
+                price = float(fields[3])
+                mv = float(fields[45])   # 总市值（亿元），A+H 股已含 H 股市值
+            except Exception:
+                continue
+            if mv > 500.0 and price > 0.0:
+                out.append((key, fields[1].strip(), mv, price))
+    return out
+
+
+def _iso_date(s):
     s = str(s or "").strip()
     if len(s) == 8 and s.isdigit():
-        return f"{s[0:4]}-{s[4:6]}-{s[6:8]}"
+        return f"{s[:4]}-{s[4:6]}-{s[6:]}"
     return s
 
 
+def akshare_dividends(codes):
+    """通过 akshare 巨潮接口逐只取历史分红，返回 {code: [record,...]}。"""
+    result = {}
+    for i, code in enumerate(codes):
+        numeric = code[-6:] if len(code) >= 6 else code
+        try:
+            df = ak.stock_dividend_cninfo(symbol=numeric)
+        except Exception:
+            result[code] = []
+            continue
+        rows = []
+        for _, row in df.iterrows():
+            try:
+                per10 = float(row.get("派息比例") or 0)
+            except Exception:
+                per10 = 0.0
+            if per10 <= 0:
+                continue
+            ex_date = _iso_date(row.get("除权日"))
+            report = str(row.get("报告时间") or "").strip()
+            fy_match = re.search(r"(\d{4})", report)
+            fy = f"{fy_match.group(1)}1231" if fy_match else ""
+            rows.append({"exDiviDate": ex_date, "reportEndDate": fy, "cashDiviRMB": round(per10, 4)})
+        result[code] = rows
+        if (i + 1) % 100 == 0:
+            print(f"     [div] 已处理 {i + 1}/{len(codes)}")
+        time.sleep(0.05)
+    return result
+
+
+# ------------------------- A股构建 -------------------------
 def _div_to_rows(divs):
     """A股分红记录 -> finalize_one 行格式。以 reportEndDate(财年) 归并；
-    cashDiviRMB 已是『元/10股』(如 茅台 2025: 10派280.24元 -> cashDiviRMB≈280.24)，故 per10 直接取该值。"""
+    cashDiviRMB 已是『元/10股』，故 per10 直接取该值。"""
     rows = []
     for d in (divs or []):
-        ex = _to_iso(d.get("exDiviDate"))
+        ex = d.get("exDiviDate", "")
+        if isinstance(ex, (int, float)):
+            ex = str(int(ex))
+        ex = _iso_date(ex)
         fy = d.get("reportEndDate")
         fy = int(fy[:4]) if isinstance(fy, str) and len(fy) >= 4 else None
         try:
@@ -224,16 +245,22 @@ def _div_to_rows(divs):
     return rows
 
 
-# ------------------------- A股构建 -------------------------
 def build():
-    print("[A股] 市值筛选股票池(westock-tool filter, 总市值>500亿元) ...")
-    pool = westock_pool()
+    print("[A股] 市值筛选股票池(腾讯 gtimg, 总市值>500亿元) ...")
+    if USE_BUILTIN:
+        print("  使用 WorkBuddy 内置 WeStock CLI")
+        pool = westock_pool()
+        dividend_fn = westock_dividends
+    else:
+        print("  使用 fallback: akshare + 腾讯 gtimg + 巨潮 cninfo")
+        pool = akshare_pool()
+        dividend_fn = akshare_dividends
     codes = [c for c, _, _, _ in pool]
     name_map = {c: n for c, n, _, _ in pool}
     mv_map = {c: mv for c, _, mv, _ in pool}      # TotalMV (亿元)
     price_map = {c: p for c, _, _, p in pool}      # ClosePrice (现价)
     print(f"     A股候选(>500亿元): {len(codes)}")
-    divs_map = westock_dividends(codes)
+    divs_map = dividend_fn(codes)
     raw, done, skipped = [], 0, 0
     for code in codes:
         price = price_map.get(code, 0)
