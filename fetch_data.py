@@ -22,6 +22,7 @@ os.environ.setdefault("TQDM_DISABLE", "1")
 
 WORKDIR = "/Users/green/WorkBuddy/2026-07-11-16-35-47"
 OUT = f"{WORKDIR}/data.json"
+DIV_CACHE = f"{WORKDIR}/.div_cache.json"
 TODAY = dt.date.today()
 TTM_START = TODAY - dt.timedelta(days=365)
 TIERS = [
@@ -153,10 +154,37 @@ def _a_prefix(code):
     return "bj"
 
 
+def _a_code_list(retries=3):
+    """A股代码列表：优先 akshare，失败重试，最终回退 names_cache.json 的键。"""
+    for attempt in range(retries):
+        try:
+            df = ak.stock_info_a_code_name()
+            codes = [str(c).strip() for c in df["code"].tolist()]
+            if codes:
+                return codes, "akshare"
+        except Exception as e:
+            print(f"  [codes] akshare 尝试 {attempt+1}/{retries} 失败: {type(e).__name__}")
+            time.sleep(3)
+    cache_path = f"{WORKDIR}/names_cache.json"
+    try:
+        with open(cache_path, "r", encoding="utf-8") as f:
+            cache = json.load(f)
+        codes = [c for c in cache.keys() if c]
+        if codes:
+            print(f"  [codes] 回退使用 names_cache.json ({len(codes)} 只)")
+            return codes, "cache"
+    except Exception as e:
+        print(f"  [codes] names_cache 读取失败: {e}")
+    return [], "none"
+
+
 def akshare_pool():
     """通过 akshare 取 A股代码列表，再批量从腾讯 gtimg 取行情/总市值，返回 (>500亿, 现价>0) 的列表。"""
-    df = ak.stock_info_a_code_name()
-    codes = [str(c).strip() for c in df["code"].tolist()]
+    codes, src = _a_code_list()
+    if not codes:
+        print("  [codes] 无可用代码列表！")
+        return []
+    print(f"  [codes] 来源={src}, 共 {len(codes)} 只")
     out = []
     sess = requests.Session()
     batch = 600
@@ -193,16 +221,19 @@ def _iso_date(s):
     return s
 
 
-def akshare_dividends(codes):
-    """通过 akshare 巨潮接口逐只取历史分红，返回 {code: [record,...]}。"""
-    result = {}
-    for i, code in enumerate(codes):
-        numeric = code[-6:] if len(code) >= 6 else code
-        try:
-            df = ak.stock_dividend_cninfo(symbol=numeric)
-        except Exception:
-            result[code] = []
-            continue
+def _fetch_one_div(code):
+    """单只分红抓取（供 subprocess 调用）。从 stdin 读 code（仅取末尾6位数字），向 stdout 写 JSON 行 {"code":..., "rows":[...]}。
+
+    注：akshare 内核使用 py_mini_racer（libmini_racer），非线程安全；故必须在子进程中运行。
+    """
+    import sys
+    import json as _json
+    line = sys.stdin.readline().strip()
+    code = line
+    numeric = code[-6:] if len(code) >= 6 else code
+    out = {"code": code, "rows": []}
+    try:
+        df = ak.stock_dividend_cninfo(symbol=numeric)
         rows = []
         for _, row in df.iterrows():
             try:
@@ -216,10 +247,108 @@ def akshare_dividends(codes):
             fy_match = re.search(r"(\d{4})", report)
             fy = f"{fy_match.group(1)}1231" if fy_match else ""
             rows.append({"exDiviDate": ex_date, "reportEndDate": fy, "cashDiviRMB": round(per10, 4)})
-        result[code] = rows
-        if (i + 1) % 100 == 0:
-            print(f"     [div] 已处理 {i + 1}/{len(codes)}")
-        time.sleep(0.05)
+        out["rows"] = rows
+    except Exception as e:
+        out["error"] = f"{type(e).__name__}: {e}"
+    sys.stdout.write(_json.dumps(out, ensure_ascii=False) + "\n")
+    sys.stdout.flush()
+
+
+def akshare_dividends(codes, workers=3, per_call_timeout=90):
+    """通过 akshare 巨潮接口抓取历史分红。每个 code 在独立子进程中调用，超时自动放弃。
+
+    - 进程隔离：避开 py_mini_racer 的线程不安全。
+    - 并发数 = workers（默认 3）。
+    - 每只 timeout = per_call_timeout 秒；超时返回空 rows。
+    - 缓存：成功结果写入 .div_cache.json，下次只抓未缓存的。
+    """
+    import sys as _sys
+    import json as _json
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutTimeout
+
+    # 读缓存
+    cache = {}
+    if os.path.exists(DIV_CACHE):
+        try:
+            with open(DIV_CACHE, "r", encoding="utf-8") as f:
+                cache = _json.load(f) or {}
+        except Exception:
+            cache = {}
+    todo = [c for c in codes if c not in cache]
+    print(f"     [div] 子进程池抓取 (workers={workers}, per-call timeout={per_call_timeout}s, 总数={len(codes)}, 缓存命中={len(codes)-len(todo)}, 待抓={len(todo)})")
+
+    script_path = os.path.abspath(__file__)
+    worker_src = (
+        "import sys, json, re, os\n"
+        "sys.path.insert(0, %r)\n" % WORKDIR +
+        "import fetch_data as _fd\n"
+        "_fd._fetch_one_div('PLACEHOLDER_CODE')\n"
+    )
+
+    def _run_one(code):
+        # 构造单只脚本
+        src = worker_src.replace("PLACEHOLDER_CODE", code)
+        try:
+            p = subprocess.run(
+                [_sys.executable, "-c", src],
+                input=code + "\n",
+                capture_output=True,
+                text=True,
+                timeout=per_call_timeout,
+            )
+        except subprocess.TimeoutExpired:
+            return (code, [], "timeout")
+        if p.returncode != 0:
+            return (code, [], f"exit={p.returncode}: {p.stderr.strip()[:120]}")
+        # 取最后一行 JSON
+        last = ""
+        for ln in (p.stdout or "").splitlines():
+            ln = ln.strip()
+            if ln.startswith("{"):
+                last = ln
+        if not last:
+            return (code, [], "no-output")
+        try:
+            obj = _json.loads(last)
+        except Exception as e:
+            return (code, [], f"parse: {e}")
+        return (code, obj.get("rows", []) or [], obj.get("error") or "")
+
+    result = dict(cache)  # 起点：缓存命中
+    done = 0
+    if todo:
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            futs = {ex.submit(_run_one, c): c for c in todo}
+            for fut, code in futs.items():
+                try:
+                    _, rows, err = fut.result(timeout=per_call_timeout + 5)
+                except FutTimeout:
+                    rows, err = [], "outer-timeout"
+                except Exception as e:
+                    rows, err = [], f"outer: {e}"
+                # 失败不写缓存（重试机会）；成功则缓存
+                if rows or not err:
+                    cache[code] = rows
+                    result[code] = rows
+                else:
+                    result[code] = rows  # 失败也用空 rows 占位
+                done += 1
+                if err:
+                    print(f"     [div-warn] {code}: {err}")
+                if done % 50 == 0 or done == len(todo):
+                    print(f"     [div] 已处理 {done}/{len(todo)}")
+                    # 增量保存缓存
+                    try:
+                        with open(DIV_CACHE, "w", encoding="utf-8") as f:
+                            _json.dump(cache, f, ensure_ascii=False)
+                    except Exception as e:
+                        print(f"     [div-warn] 缓存写入失败: {e}")
+        # 写最终缓存
+        try:
+            with open(DIV_CACHE, "w", encoding="utf-8") as f:
+                _json.dump(cache, f, ensure_ascii=False)
+        except Exception as e:
+            print(f"     [div-warn] 缓存写入失败: {e}")
     return result
 
 
